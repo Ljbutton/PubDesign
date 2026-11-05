@@ -31,6 +31,35 @@ CloseApplications=yes
 RestartApplications=no
 ChangesAssociations=yes
 
+[Code]
+// Auto-updates run this installer with /WAITFORAPP: wait (up to 30 s) for the running
+// PubDesign to close before files are replaced. PubDesign holds the "PubDesignRunning" mutex.
+function HasParam(const Name: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Name) = 0 then
+      Result := True;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
+begin
+  if HasParam('/WAITFORAPP') then
+  begin
+    Waited := 0;
+    while CheckForMutexes('PubDesignRunning') and (Waited < 30000) do
+    begin
+      Sleep(250);
+      Waited := Waited + 250;
+    end;
+  end;
+  Result := True;
+end;
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
 Name: "pubdefault"; Description: "Open &.pub files with PubDesign when double-clicked"; GroupDescription: "Files:"

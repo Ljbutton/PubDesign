@@ -1,4 +1,4 @@
 {
-  "version": "2.2.1",
-  "notes": "New Print screen with a live preview, printer choice, page range, paper size, two-sided and grayscale printing."
+  "version": "2.2.2",
+  "notes": "Updates now install without opening a Command Prompt window; a small progress window shows instead."
 }

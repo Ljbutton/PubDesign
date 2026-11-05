@@ -1121,7 +1121,8 @@ class MainWindow(QMainWindow):
         prog.close()
         self.dirty = False
         if updater.FROZEN:
-            QMessageBox.information(self, APP, f"PubDesign will close, install version {new}, and reopen in a few seconds.")
+            QMessageBox.information(self, APP, f"PubDesign will close and install version {new}. A small progress window "
+                                    "shows the install, then PubDesign reopens by itself.")
         else:
             QMessageBox.information(self, APP, f"PubDesign {new} is installed. PubDesign will now restart.")
             updater.restart()
@@ -2864,6 +2865,7 @@ def main():
         selftest()
     if hasattr(Qt, "HighDpiScaleFactorRoundingPolicy"):
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    updater.mark_running()
     app = QApplication(sys.argv)
     app.setApplicationName(APP)
     app.setStyle("Fusion")

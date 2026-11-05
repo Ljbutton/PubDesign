@@ -85,10 +85,28 @@ def install_exe_update(progress=None):
     download(url, dest, progress)
     if os.path.getsize(dest) < 1_000_000:
         raise RuntimeError("The download was incomplete. Try again.")
-    # wait ~3 s so this window has closed, then install silently
-    cmd = f'ping -n 4 127.0.0.1 >nul & "{dest}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-'
-    subprocess.Popen(["cmd.exe", "/c", cmd], close_fds=True, creationflags=0x08000000 | 0x00000008)
+    # Run the installer directly (no Command Prompt). /WAITFORAPP makes it wait until this
+    # copy of PubDesign has closed (see APP_MUTEX) before replacing files; it shows only a
+    # small progress window and reopens PubDesign when done.
+    subprocess.Popen([dest, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/WAITFORAPP"],
+                     close_fds=True, creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_PROCESS_GROUP
     return info.get("version", "?")
+
+
+APP_MUTEX = "PubDesignRunning"
+_mutex = None
+
+
+def mark_running():
+    """Hold a named mutex while PubDesign runs so the installer can wait for it to close."""
+    global _mutex
+    if os.name != "nt" or _mutex is not None:
+        return
+    try:
+        import ctypes
+        _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX)
+    except Exception:
+        _mutex = None
 
 
 def _read(path):
