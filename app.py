@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import traceback
+import re
 
 from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize, QTimer, QMarginsF, QSettings, QUrl, QMimeData, QEvent
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPageSize, QPageLayout, QPdfWriter,
@@ -277,16 +278,38 @@ class PageView(QGraphicsView):
 # Backstage (File tab)
 # ---------------------------------------------------------------------------
 BACKSTAGE_QSS = f"""
-#BackNav {{ background: {ACCENT}; }}
-#BackNav QToolButton {{ color: white; background: transparent; border: none; text-align: left; padding: 9px 18px;
-    font-size: 11pt; }}
-#BackNav QToolButton:hover {{ background: {ACCENT_DARK}; }}
-#BackNav QToolButton:checked {{ background: {ACCENT_DARK}; font-weight: 600; }}
-#BackBody {{ background: #ffffff; }}
-#BackTitle {{ font-size: 26pt; font-weight: 300; color: #333; }}
-#Tile {{ border: 1px solid #ddd; background: #fff; padding: 6px; font-size: 9pt; }}
+#BackNav {{ background: #f3f3f3; border-right: 1px solid #e3e3e3; }}
+#BackNav QToolButton {{ color: #242424; background: transparent; border: none; border-left: 3px solid transparent;
+    text-align: left; padding: 7px 14px 7px 13px; font-size: 10pt; }}
+#BackNav QToolButton:hover {{ background: #e8e8e8; }}
+#BackNav QToolButton:checked {{ background: #e3e3e3; border-left: 3px solid {ACCENT}; font-weight: 600; }}
+#BackNav #BackBtn {{ border: none; padding: 6px 12px; }}
+#BackNav QFrame#NavSep {{ background: #dcdcdc; max-height: 1px; min-height: 1px; margin: 6px 18px; }}
+#BackBody, #BackBody > QWidget {{ background: #fafafa; }}
+#BackTitle {{ font-size: 21pt; font-weight: 400; color: #242424; }}
+#Greeting {{ font-size: 18pt; font-weight: 400; color: #242424; }}
+#SectionHead {{ font-size: 14pt; color: #242424; }}
+#Tile {{ border: 1px solid #ddd; background: #fff; padding: 6px; font-size: 9pt; border-radius: 4px; }}
 #Tile:hover {{ border-color: {ACCENT}; background: #f1f8f7; }}
-#BigAction {{ border: 1px solid #ddd; background: #fafafa; padding: 10px; font-size: 10.5pt; text-align: left; }}
+#HomeTile {{ border: none; background: transparent; padding: 10px 6px 8px 6px; font-size: 9pt; color: #242424;
+    border-radius: 4px; }}
+#HomeTile:hover {{ background: #ebebeb; }}
+#LinkBtn {{ border: none; background: transparent; color: {ACCENT}; font-size: 9.5pt; font-weight: 600; }}
+#LinkBtn:hover {{ text-decoration: underline; }}
+#Pill {{ border: 1px solid #8a8a8a; background: #ffffff; color: #242424; border-radius: 14px; padding: 0px 16px;
+    font-size: 10pt; min-height: 28px; max-height: 28px; }}
+#Pill:hover {{ background: #f0f0f0; }}
+#Pill:checked {{ background: {ACCENT}; border-color: {ACCENT}; color: white; }}
+#FileSearch {{ border: 1px solid #8a8a8a; border-radius: 3px; padding: 5px 8px 5px 30px; background: white;
+    font-size: 9.5pt; }}
+#FileSearch:focus {{ border: 1px solid {ACCENT}; }}
+#ColHead {{ color: #444; font-size: 9pt; }}
+#FileList {{ border: none; background: transparent; outline: none; }}
+#FileList::item {{ border-bottom: 1px solid #e3e3e3; }}
+#FileList::item:hover {{ background: #f0f0f0; }}
+#FileList::item:selected {{ background: #e6f2f0; }}
+#BigAction {{ border: 1px solid #e1e1e1; background: #ffffff; padding: 10px; font-size: 10.5pt; text-align: left;
+    border-radius: 6px; }}
 #BigAction:hover {{ border-color: {ACCENT}; background: #f1f8f7; }}
 """
 
@@ -302,49 +325,56 @@ class Backstage(QWidget):
         nav = QWidget()
         nav.setObjectName("BackNav")
         nav.setAttribute(Qt.WA_StyledBackground, True)
-        nav.setFixedWidth(190)
+        nav.setFixedWidth(170)
         nv = QVBoxLayout(nav)
         nv.setContentsMargins(0, 10, 0, 10)
         nv.setSpacing(0)
         back = QToolButton()
-        back.setIcon(icons.icon("back", 32))
-        back.setIconSize(QSize(30, 30))
+        back.setObjectName("BackBtn")
+        back.setIcon(icons.icon("bs_back", 32))
+        back.setIconSize(QSize(26, 26))
         back.setToolTip("Back to your publication (Esc)")
+        back.setCursor(Qt.PointingHandCursor)
         back.clicked.connect(editor.close_backstage)
         nv.addWidget(back)
-        nv.addSpacing(10)
-        if os.path.exists(asset("logo.png")):
-            lg = QLabel()
-            lg.setPixmap(QPixmap(asset("logo.png")).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            lg.setAlignment(Qt.AlignCenter)
-            nv.addWidget(lg)
-            nm = QLabel("PubDesign")
-            nm.setAlignment(Qt.AlignCenter)
-            nm.setStyleSheet("color:white; font-size:13pt; font-weight:600; padding-bottom:10px")
-            nv.addWidget(nm)
+        nv.addSpacing(14)
         self.body = QStackedWidget()
         self.body.setObjectName("BackBody")
         self.buttons = {}
-        for key, label in [("info", "Info"), ("new", "New"), ("open", "Open"), ("save", "Save"),
-                           ("saveas", "Save As"), ("print", "Print"), ("export", "Export"), ("close", "Close")]:
+
+        def sep():
+            f = QFrame()
+            f.setObjectName("NavSep")
+            nv.addWidget(f)
+
+        def item(key, label, icon_name):
             b = QToolButton()
-            b.setText(label)
+            b.setText("  " + label)
+            b.setIcon(icons.icon(icon_name, 20))
+            b.setIconSize(QSize(18, 18))
             b.setCheckable(key not in ("save", "close"))
-            b.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self.show_page(k))
             nv.addWidget(b)
             self.buttons[key] = b
+
+        for key, label, ic in [("home", "Home", "bs_home"), ("new", "New", "bs_new"), ("open", "Open", "bs_open")]:
+            item(key, label, ic)
+        sep()
+        for key, label, ic in [("info", "Info", "bs_info"), ("save", "Save", "bs_save"),
+                               ("saveas", "Save As", "bs_saveas"), ("print", "Print", "bs_print"),
+                               ("export", "Export", "bs_export"), ("close", "Close", "bs_close")]:
+            item(key, label, ic)
         nv.addStretch()
-        ab = QToolButton()
-        ab.setText("About")
-        ab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        ab.clicked.connect(editor.about)
-        nv.addWidget(ab)
+        sep()
+        item("options", "Options", "bs_options")
         h.addWidget(nav)
         h.addWidget(self.body, 1)
-        self.pages = {"info": self._info_page(), "new": self._new_page(), "open": self._open_page(),
-                      "saveas": self._saveas_page(), "print": self._print_page(), "export": self._export_page()}
+        self.pages = {"home": self._home_page(), "info": self._info_page(), "new": self._new_page(),
+                      "open": self._open_page(), "saveas": self._saveas_page(), "print": self._print_page(),
+                      "export": self._export_page(), "options": self._options_page()}
         for w in self.pages.values():
             self.body.addWidget(w)
         self.setStyleSheet(BACKSTAGE_QSS)
@@ -381,18 +411,319 @@ class Backstage(QWidget):
         v.addSpacing(10)
         v.addWidget(self._big("size", "Page Setup", "Change the page size, orientation and margin guides.",
                               lambda: (self.editor.close_backstage(), self.editor.page_setup_dialog())))
-        v.addWidget(self._big("export", "Check for Updates", "Get the newest version of PubDesign from GitHub.",
+        v.addStretch()
+        return w
+
+    # ---------------- Options ----------------
+    def _options_page(self):
+        w, v = self._page("Options")
+        head = QLabel("Updates")
+        head.setObjectName("SectionHead")
+        v.addWidget(head)
+        v.addWidget(self._big("bs_new", "Check for Updates", "Get the newest version of PubDesign from GitHub.",
                               self.editor.check_for_updates))
         self.auto_chk = QCheckBox("Check for updates automatically when PubDesign starts")
         self.auto_chk.setChecked(self.editor.settings.value("auto_update", True, type=bool))
         self.auto_chk.toggled.connect(lambda on: self.editor.settings.setValue("auto_update", on))
         v.addWidget(self.auto_chk)
+        v.addSpacing(18)
+        head = QLabel("Window")
+        head.setObjectName("SectionHead")
+        v.addWidget(head)
         self.classic_chk = QCheckBox("Use the standard Windows title bar (takes effect next time PubDesign starts)")
         self.classic_chk.setChecked(self.editor.settings.value("classic_titlebar", False, type=bool))
         self.classic_chk.toggled.connect(lambda on: self.editor.settings.setValue("classic_titlebar", on))
         v.addWidget(self.classic_chk)
+        v.addSpacing(18)
+        head = QLabel("About")
+        head.setObjectName("SectionHead")
+        v.addWidget(head)
+        self.about_label = QLabel()
+        self.about_label.setStyleSheet("color:#444; font-size:10pt")
+        v.addWidget(self.about_label)
+        v.addWidget(self._big("bs_info", "About PubDesign", "Version, licenses and the project page.",
+                              self.editor.about))
         v.addStretch()
         return w
+
+    # ---------------- Home (like the Office start page) ----------------
+    def _home_page(self):
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QFrame.NoFrame)
+        outer.addWidget(sa)
+        inner = QWidget()
+        sa.setWidget(inner)
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(48, 20, 48, 20)
+        v.setSpacing(6)
+        self.greeting = QLabel()
+        self.greeting.setObjectName("Greeting")
+        v.addWidget(self.greeting)
+        v.addSpacing(10)
+
+        # "New" strip
+        hr = QHBoxLayout()
+        self.new_toggle = QToolButton()
+        self.new_toggle.setIcon(icons.icon("bs_chevron", 16))
+        self.new_toggle.setIconSize(QSize(14, 14))
+        self.new_toggle.setAutoRaise(True)
+        self.new_toggle.setCursor(Qt.PointingHandCursor)
+        hr.addWidget(self.new_toggle)
+        nh = QLabel("New")
+        nh.setObjectName("SectionHead")
+        hr.addWidget(nh)
+        hr.addStretch()
+        more = self._link("More templates", lambda: self.show_page("new"))
+        hr.addWidget(more)
+        v.addLayout(hr)
+        self.tiles = QWidget()
+        th = QHBoxLayout(self.tiles)
+        th.setContentsMargins(0, 4, 0, 4)
+        th.setSpacing(6)
+
+        def tile(name, doc, slot):
+            b = QToolButton()
+            b.setObjectName("HomeTile")
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            h = 92
+            wpx = max(int(h * doc.width / doc.height), 40)
+            if wpx > 150:
+                wpx, h = 150, int(150 * doc.height / doc.width)
+            img = page_image(doc.pages[0], doc, wpx)
+            frame = QPixmap(wpx + 2, 94)
+            frame.fill(Qt.transparent)
+            pp = QPainter(frame)
+            pp.fillRect(0, 94 - (h + 2), wpx + 2, h + 2, QColor(200, 200, 200))
+            pp.drawImage(1, 94 - (h + 1), img)
+            pp.end()
+            b.setIcon(QIcon(frame))
+            b.setIconSize(QSize(wpx + 2, 94))
+            b.setText(name)
+            b.setFixedWidth(140)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(slot)
+            return b
+
+        th.addWidget(tile("Blank publication", templates.blank(612, 792),
+                          lambda: self.editor.new_from(templates.blank(612, 792))))
+        for name, desc, fn in templates.STARTERS:
+            b = tile(name, fn(), lambda _=False, f=fn: self.editor.new_from(f()))
+            b.setToolTip(desc)
+            th.addWidget(b)
+        th.addStretch()
+        self.tile_buttons = [th.itemAt(i).widget() for i in range(th.count()) if th.itemAt(i).widget()]
+        self.tiles.installEventFilter(self)
+        ts = self.tiles
+        v.addWidget(ts)
+        self.new_toggle.clicked.connect(lambda: (ts.setVisible(not ts.isVisible()),
+                                                 self.new_toggle.setIcon(icons.icon(
+                                                     "bs_chevron" if ts.isVisible() else "bs_arrow", 16))))
+        v.addSpacing(16)
+
+        # Recent / Pinned + search
+        fr = QHBoxLayout()
+        fr.setSpacing(10)
+        self.pill_recent = self._pill("Recent")
+        self.pill_pinned = self._pill("Pinned")
+        self.pill_recent.setChecked(True)
+        for pbtn in (self.pill_recent, self.pill_pinned):
+            pbtn.clicked.connect(self._pill_clicked)
+            fr.addWidget(pbtn)
+        fr.addStretch()
+        self.file_search = QLineEdit()
+        self.file_search.setObjectName("FileSearch")
+        self.file_search.setPlaceholderText("Search for a file")
+        self.file_search.setFixedWidth(420)
+        self.file_search.setClearButtonEnabled(True)
+        si = QLabel(self.file_search)
+        si.setPixmap(icons.icon("bs_search", 16).pixmap(15, 15))
+        si.move(9, 8)
+        self.file_search.textChanged.connect(lambda _: self.refresh_home_files())
+        fr.addWidget(self.file_search)
+        v.addLayout(fr)
+        v.addSpacing(8)
+        ch = QHBoxLayout()
+        ch.setContentsMargins(8, 0, 8, 0)
+        n1 = QLabel("Name")
+        n1.setObjectName("ColHead")
+        n2 = QLabel("Date modified")
+        n2.setObjectName("ColHead")
+        n2.setFixedWidth(150)
+        ch.addWidget(n1)
+        ch.addStretch()
+        ch.addWidget(n2)
+        v.addLayout(ch)
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background:#e3e3e3")
+        v.addWidget(line)
+        self.file_list = QListWidget()
+        self.file_list.setObjectName("FileList")
+        self.file_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.file_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.file_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(self._file_menu)
+        self.file_list.itemClicked.connect(self._file_clicked)
+        v.addWidget(self.file_list)
+        mr = QHBoxLayout()
+        mr.addStretch()
+        mr.addWidget(self._link("More publications", lambda: self.show_page("open")))
+        v.addLayout(mr)
+        v.addStretch()
+        return w
+
+    def eventFilter(self, obj, ev):
+        # like Office: show as many template tiles as fit on one row
+        if obj is getattr(self, "tiles", None) and ev.type() == QEvent.Resize:
+            avail = obj.width()
+            used = 0
+            for b in self.tile_buttons:
+                used += b.width() + 6
+                b.setVisible(used <= avail)
+        return super().eventFilter(obj, ev)
+
+    def _link(self, text, slot):
+        b = QToolButton()
+        b.setObjectName("LinkBtn")
+        b.setText(text + "  ")
+        b.setIcon(icons.icon("bs_arrow", 16))
+        b.setIconSize(QSize(16, 16))
+        b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        b.setLayoutDirection(Qt.RightToLeft)
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(slot)
+        return b
+
+    def _pill(self, text):
+        b = QPushButton(text)
+        b.setObjectName("Pill")
+        b.setCheckable(True)
+        b.setCursor(Qt.PointingHandCursor)
+        return b
+
+    def _pill_clicked(self):
+        src = self.sender()
+        for pbtn in (self.pill_recent, self.pill_pinned):
+            pbtn.setChecked(pbtn is src)
+        self.refresh_home_files()
+
+    def _pinned(self):
+        r = self.editor.settings.value("pinned", [])
+        if isinstance(r, str):
+            r = [r]
+        return [p for p in (r or []) if os.path.exists(p)]
+
+    def _set_pinned(self, paths):
+        self.editor.settings.setValue("pinned", paths)
+
+    def _file_menu(self, pos):
+        li = self.file_list.itemAt(pos)
+        if li is None or not li.data(Qt.UserRole):
+            return
+        path = li.data(Qt.UserRole)
+        pinned = self._pinned()
+        m = QMenu(self)
+        m.addAction("Open", lambda: self.editor.open_path(path))
+        if path in pinned:
+            m.addAction("Unpin from list", lambda: (self._set_pinned([p for p in pinned if p != path]),
+                                                    self.refresh_home_files()))
+        else:
+            m.addAction("Pin to list", lambda: (self._set_pinned([path] + pinned), self.refresh_home_files()))
+        m.addAction("Open file location",
+                    lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path))))
+        m.addSeparator()
+        m.addAction("Remove from list", lambda: self._forget(path))
+        m.exec(self.file_list.mapToGlobal(pos))
+
+    def _forget(self, path):
+        ed = self.editor
+        ed.settings.setValue("recent", [p for p in ed.recent_files() if p != path])
+        self._set_pinned([p for p in self._pinned() if p != path])
+        self.refresh_home_files()
+
+    def _file_clicked(self, li):
+        path = li.data(Qt.UserRole)
+        if path:
+            self.editor.open_path(path)
+
+    @staticmethod
+    def _where(path):
+        d = os.path.dirname(path)
+        home = os.path.expanduser("~")
+        if os.path.normcase(d).startswith(os.path.normcase(home)):
+            d = d[len(home):].lstrip("\\/")
+        parts = [p for p in re.split(r"[\\/]+", d) if p]
+        return " » ".join(parts) if parts else d
+
+    @staticmethod
+    def _when(path):
+        import datetime
+        try:
+            t = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+        except OSError:
+            return ""
+        now = datetime.datetime.now()
+        if t.date() == now.date():
+            return t.strftime("%I:%M %p").lstrip("0")
+        if t.year == now.year:
+            return f"{t.strftime('%B')} {t.day}"
+        return f"{t.strftime('%B')} {t.day}, {t.year}"
+
+    def refresh_home(self):
+        import datetime
+        hour = datetime.datetime.now().hour
+        self.greeting.setText("Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening")
+        self.refresh_home_files()
+
+    def refresh_home_files(self):
+        self.file_list.clear()
+        paths = self._pinned() if self.pill_pinned.isChecked() else self.editor.recent_files()
+        q = self.file_search.text().strip().lower()
+        if q:
+            paths = [p for p in paths if q in os.path.basename(p).lower()]
+        pinned = set(self._pinned())
+        for p in paths:
+            row = QWidget()
+            row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            h = QHBoxLayout(row)
+            h.setContentsMargins(8, 8, 8, 8)
+            h.setSpacing(12)
+            ic = QLabel()
+            ic.setPixmap(icons.icon("bs_pubfile", 32).pixmap(30, 30))
+            h.addWidget(ic)
+            tv = QVBoxLayout()
+            tv.setSpacing(1)
+            nm = QLabel(os.path.basename(p) + ("   📌" if p in pinned else ""))
+            nm.setStyleSheet("font-size:10.5pt; color:#242424; background:transparent")
+            wh = QLabel(self._where(p))
+            wh.setStyleSheet("font-size:8.5pt; color:#555; background:transparent")
+            tv.addWidget(nm)
+            tv.addWidget(wh)
+            h.addLayout(tv)
+            h.addStretch()
+            dt = QLabel(self._when(p))
+            dt.setStyleSheet("font-size:9pt; color:#333; background:transparent")
+            dt.setFixedWidth(150)
+            h.addWidget(dt)
+            li = QListWidgetItem()
+            li.setData(Qt.UserRole, p)
+            li.setToolTip(p)
+            li.setSizeHint(QSize(100, 56))
+            self.file_list.addItem(li)
+            self.file_list.setItemWidget(li, row)
+        if not paths:
+            msg = ("No pinned publications yet. Right-click a recent file and choose Pin to list."
+                   if self.pill_pinned.isChecked() else
+                   "No matching files." if q else "Publications you open or save will show up here.")
+            li = QListWidgetItem(msg)
+            li.setFlags(Qt.NoItemFlags)
+            li.setSizeHint(QSize(100, 48))
+            self.file_list.addItem(li)
+        self.file_list.setFixedHeight(sum(self.file_list.sizeHintForRow(i) for i in range(self.file_list.count())) + 4)
 
     def refresh_info(self):
         ed = self.editor
@@ -838,6 +1169,10 @@ class Backstage(QWidget):
             self.refresh_info()
         elif key == "open":
             self.refresh_recent()
+        elif key == "home":
+            self.refresh_home()
+        elif key == "options":
+            self.about_label.setText(f"PubDesign {VERSION}  ·  github.com/{updater.REPO}")
         self.body.setCurrentWidget(self.pages[key])
         if key == "print":
             self.orient_combo.blockSignals(True)
@@ -2589,9 +2924,9 @@ class MainWindow(QMainWindow):
             self.pos_label.setText(f"Position: {sp.x() / uf:.2f}, {sp.y() / uf:.2f} {self.doc.unit}")
 
     # ================= backstage =================
-    def open_backstage(self, page="info"):
+    def open_backstage(self, page="home"):
         if not isinstance(page, str):
-            page = "info"
+            page = "home"
         self.checkpoint()
         self.stack.setCurrentIndex(1)
         self.backstage.show_page(page)
@@ -2995,7 +3330,7 @@ def selftest():
             fodg_dir = tempfile.mkdtemp()
             fodg = PI.pubconv_to_fodg(asset("template.pub"), fodg_dir)
             pages = len(PI.FodgReader(fodg).document().pages) if fodg else 0
-            report.append(f"Publisher file via pubconv: {pages} page(s)")
+            report.append(f"Publisher file via pubconv: {pages} page(s) {PI.last_pubconv_error}")
             ok &= pages >= 1
             # WMF clip art through GDI+
             wmf = os.path.join(os.path.dirname(tool), "test.wmf")
@@ -3099,7 +3434,7 @@ def main():
     if args and os.path.exists(args[0]):
         win.open_path(args[0], checked=True)
     else:
-        win.open_backstage("new")
+        win.open_backstage("home")
     sys.exit(app.exec())
 
 

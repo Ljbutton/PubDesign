@@ -65,18 +65,25 @@ def _run_tool(cmd, timeout):
                           timeout=timeout, **kw)
 
 
+last_pubconv_error = ""
+
+
 def pubconv_to_fodg(src, outdir):
     """Publisher file -> flat ODG with the bundled reader. Returns the path or None."""
     tool = find_pubconv()
     if not tool:
         return None
     out = os.path.join(outdir, "pubconv.fodg")
+    global last_pubconv_error
     try:
         r = _run_tool([tool, src, out], timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as e:
+        last_pubconv_error = repr(e)
         return None
     if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 200:
+        last_pubconv_error = f"exit {r.returncode}: {r.stderr.decode(errors='replace').strip()[:300]}"
         return None
+    last_pubconv_error = ""
     return out
 
 

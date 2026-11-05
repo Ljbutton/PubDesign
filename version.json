@@ -1,4 +1,4 @@
 {
-  "version": "2.3.0",
-  "notes": "Opens Microsoft Publisher files with a built-in reader, so LibreOffice is no longer needed."
+  "version": "2.3.1",
+  "notes": "Built-in Publisher reader (no LibreOffice needed) and a new Office-style File menu with a Home page, recent and pinned files."
 }

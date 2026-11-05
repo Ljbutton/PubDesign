@@ -524,4 +524,143 @@ def d_flip_h(p):
     poly(p, [(18, 6), (18, 26), (28, 26)], BLUE)
 
 
+# ---- thin outline icons for the File menu (modern Office style) ----
+LINE = QColor(50, 50, 50)
+
+
+def _ln(p, w=2.0):
+    pn = QPen(LINE, w)
+    pn.setJoinStyle(Qt.RoundJoin)
+    pn.setCapStyle(Qt.RoundCap)
+    p.setPen(pn)
+    p.setBrush(Qt.NoBrush)
+
+
+def d_bs_back(p):
+    _ln(p, 2.0)
+    p.drawEllipse(QRectF(3, 3, 26, 26))
+    p.drawLine(QPointF(9.5, 16), QPointF(22.5, 16))
+    p.drawPolyline(QPolygonF([QPointF(14.5, 11), QPointF(9.5, 16), QPointF(14.5, 21)]))
+
+
+def d_bs_home(p):
+    _ln(p)
+    p.drawPolyline(QPolygonF([QPointF(4, 15), QPointF(16, 4.5), QPointF(28, 15)]))
+    p.drawPolyline(QPolygonF([QPointF(7.5, 12.5), QPointF(7.5, 27.5), QPointF(13, 27.5), QPointF(13, 19.5),
+                              QPointF(19, 19.5), QPointF(19, 27.5), QPointF(24.5, 27.5), QPointF(24.5, 12.5)]))
+
+
+def d_bs_new(p):
+    _ln(p)
+    p.drawEllipse(QRectF(4, 4, 24, 24))
+    p.drawLine(QPointF(16, 10), QPointF(16, 22))
+    p.drawLine(QPointF(10, 16), QPointF(22, 16))
+
+
+def d_bs_open(p):
+    _ln(p)
+    p.drawPolyline(QPolygonF([QPointF(4, 25), QPointF(4, 7), QPointF(12, 7), QPointF(14.5, 10),
+                              QPointF(25, 10), QPointF(25, 14)]))
+    p.drawPolygon(QPolygonF([QPointF(4, 25.5), QPointF(8.5, 14.5), QPointF(29, 14.5), QPointF(24.5, 25.5)]))
+
+
+def d_bs_info(p):
+    _ln(p)
+    p.drawEllipse(QRectF(4, 4, 24, 24))
+    p.drawLine(QPointF(16, 14.5), QPointF(16, 22.5))
+    p.setPen(Qt.NoPen)
+    p.setBrush(LINE)
+    p.drawEllipse(QPointF(16, 10), 1.6, 1.6)
+
+
+def d_bs_save(p):
+    _ln(p)
+    p.drawPolygon(QPolygonF([QPointF(5, 5), QPointF(23, 5), QPointF(27, 9), QPointF(27, 27), QPointF(5, 27)]))
+    p.drawPolyline(QPolygonF([QPointF(10, 5), QPointF(10, 11), QPointF(21, 11), QPointF(21, 5)]))
+    p.drawPolyline(QPolygonF([QPointF(9, 27), QPointF(9, 18), QPointF(23, 18), QPointF(23, 27)]))
+
+
+def d_bs_saveas(p):
+    _ln(p)
+    p.drawPolyline(QPolygonF([QPointF(16, 27), QPointF(5, 27), QPointF(5, 5), QPointF(23, 5), QPointF(27, 9),
+                              QPointF(27, 13)]))
+    p.drawPolyline(QPolygonF([QPointF(10, 5), QPointF(10, 11), QPointF(21, 11), QPointF(21, 5)]))
+    p.drawPolyline(QPolygonF([QPointF(9, 27), QPointF(9, 18), QPointF(16, 18)]))
+    p.drawPolygon(QPolygonF([QPointF(19, 28), QPointF(19.5, 24.5), QPointF(27.5, 16.5), QPointF(30.5, 19.5),
+                             QPointF(22.5, 27.5)]))
+
+
+def d_bs_print(p):
+    _ln(p)
+    p.drawPolyline(QPolygonF([QPointF(9, 11), QPointF(9, 4), QPointF(23, 4), QPointF(23, 11)]))
+    p.drawRoundedRect(QRectF(4, 11, 24, 12), 2.5, 2.5)
+    p.drawRect(QRectF(9, 18, 14, 10))
+
+
+def d_bs_export(p):
+    _ln(p)
+    p.drawPolyline(QPolygonF([QPointF(20, 18), QPointF(20, 27), QPointF(5, 27), QPointF(5, 5), QPointF(15, 5),
+                              QPointF(20, 10), QPointF(20, 13)]))
+    p.drawLine(QPointF(13, 15.5), QPointF(29, 15.5))
+    p.drawPolyline(QPolygonF([QPointF(25, 11.5), QPointF(29, 15.5), QPointF(25, 19.5)]))
+
+
+def d_bs_close(p):
+    _ln(p)
+    p.drawRoundedRect(QRectF(4, 6, 24, 20), 2, 2)
+
+
+def d_bs_options(p):
+    _ln(p, 1.8)
+    path = QPainterPath()
+    n = 8
+    for i in range(n * 2):
+        a = math.pi * i / n
+        r = 12 if i % 2 == 0 else 9.5
+        pt = QPointF(16 + r * math.cos(a), 16 + r * math.sin(a))
+        if i == 0:
+            path.moveTo(pt)
+        else:
+            path.lineTo(pt)
+    path.closeSubpath()
+    p.drawPath(path)
+    p.drawEllipse(QPointF(16, 16), 4, 4)
+
+
+def d_bs_search(p):
+    _ln(p, 2.2)
+    p.drawEllipse(QRectF(5, 5, 15, 15))
+    p.drawLine(QPointF(18, 18), QPointF(27, 27))
+
+
+def d_bs_arrow(p):
+    pn = QPen(TEAL.darker(110), 2.2)
+    pn.setCapStyle(Qt.RoundCap)
+    pn.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pn)
+    p.drawLine(QPointF(5, 16), QPointF(27, 16))
+    p.drawPolyline(QPolygonF([QPointF(20, 9), QPointF(27, 16), QPointF(20, 23)]))
+
+
+def d_bs_chevron(p):
+    _ln(p, 2.2)
+    p.drawPolyline(QPolygonF([QPointF(9, 12), QPointF(16, 19), QPointF(23, 12)]))
+
+
+def d_bs_pubfile(p):
+    # document with a small teal PubDesign badge (recent files list)
+    poly(p, [(8, 3), (21, 3), (27, 9), (27, 29), (8, 29)], PAPER, QColor(140, 140, 140), 1.2)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(200, 225, 220))
+    p.drawRect(QRectF(13, 9, 10, 4))
+    p.drawRect(QRectF(13, 16, 10, 2))
+    p.drawRect(QRectF(13, 21, 7, 2))
+    p.setBrush(TEAL)
+    p.drawRoundedRect(QRectF(2, 15, 13, 13), 2.5, 2.5)
+    p.setPen(QPen(PAPER, 1))
+    f = QFont("Segoe UI", 8, QFont.Bold)
+    p.setFont(f)
+    p.drawText(QRectF(2, 15, 13, 13), Qt.AlignCenter, "P")
+
+
 DRAW = {k[2:]: v for k, v in globals().items() if k.startswith("d_")}

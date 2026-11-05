@@ -75,7 +75,7 @@ python -m venv .venv
 | `canvas.py`, `autoshapes.py` | Page canvas and shape drawing |
 | `pubwriter.py`, `pubreader.py` | Native `.pub` writer and reader |
 | `pubblocks.py`, `escher.py`, `quill.py`, `fkp.py`, `cfb.py` | `.pub` file-format internals |
-| `pub_import.py` | Opening Publisher-made files through LibreOffice |
+| `pub_import.py`, `tools/pubconv/` | Opening Publisher-made files (bundled reader) |
 | `updater.py`, `version.json` | Update checks and installs |
 | `templates.py` | Starter designs and page sizes |
 | `pubdesign.spec`, `installer.iss`, `.github/workflows/build.yml` | Windows build and installer |
