@@ -1,0 +1,13 @@
+pubconv - PubDesign's Microsoft Publisher reader
+
+pubconv is built from these open-source libraries (source code is available at the links):
+
+  libmspub    https://wiki.documentfoundation.org/DLP/Libraries/libmspub   MPL 2.0
+  librevenge  https://sourceforge.net/p/libwpd/librevenge/                 MPL 2.0 / LGPL 2.1+
+  libodfgen   https://sourceforge.net/p/libwpd/libodfgen/                  MPL 2.0 / LGPL 2.1+
+  ICU         https://icu.unicode.org                                      Unicode license
+  zlib        https://zlib.net                                             zlib license
+  GCC runtime libraries (libstdc++, libgcc, libwinpthread)                 GPL with runtime exception
+
+The DLLs are unmodified builds from the MSYS2 project (https://www.msys2.org).
+test.wmf is a sample picture from the Apache POI test files (Apache License 2.0).

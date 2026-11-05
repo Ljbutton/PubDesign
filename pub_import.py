@@ -38,7 +38,102 @@ class ImportError_(Exception):
 
 
 # ---------------------------------------------------------------------------
-# LibreOffice discovery / conversion
+# bundled Publisher reader (pubconv: libmspub + libodfgen, built in tools/pubconv)
+# ---------------------------------------------------------------------------
+def _app_dirs():
+    here = os.path.dirname(os.path.abspath(__file__))
+    dirs = [getattr(sys, "_MEIPASS", None), os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+            else None, here]
+    return [d for d in dirs if d]
+
+
+def find_pubconv():
+    exe = "pubconv.exe" if os.name == "nt" else "pubconv"
+    for d in _app_dirs():
+        for sub in ("pubconv", os.path.join("tools", "pubconv", "build"), os.path.join("tools", "pubconv")):
+            p = os.path.join(d, sub, exe)
+            if os.path.isfile(p):
+                return p
+    return shutil.which(exe)
+
+
+def _run_tool(cmd, timeout):
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    return subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=timeout, **kw)
+
+
+def pubconv_to_fodg(src, outdir):
+    """Publisher file -> flat ODG with the bundled reader. Returns the path or None."""
+    tool = find_pubconv()
+    if not tool:
+        return None
+    out = os.path.join(outdir, "pubconv.fodg")
+    try:
+        r = _run_tool([tool, src, out], timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 200:
+        return None
+    return out
+
+
+def wmf_placeable(data):
+    """Plain WMF -> placeable WMF (adds the header GDI+ needs to know the picture's size)."""
+    import struct
+    if data[:4] == b"\xd7\xcd\xc6\x9a" or len(data) < 18:
+        return data
+    org, ext = (0, 0), None
+    pos = struct.unpack_from("<H", data, 2)[0] * 2  # header size in words
+    while pos + 6 <= len(data):
+        size, func = struct.unpack_from("<IH", data, pos)
+        if size < 3:
+            break
+        if func == 0x020B and pos + 10 <= len(data):      # SetWindowOrg(y, x)
+            y, x = struct.unpack_from("<hh", data, pos + 6)
+            org = (x, y)
+        elif func == 0x020C and pos + 10 <= len(data):    # SetWindowExt(y, x)
+            y, x = struct.unpack_from("<hh", data, pos + 6)
+            ext = (x, y)
+        if func == 0:
+            break
+        pos += size * 2
+    if not ext or ext[0] == 0 or ext[1] == 0:
+        ext = (1000, 1000)
+    xs = (org[0], org[0] + ext[0])
+    ys = (org[1], org[1] + ext[1])
+    left, right = min(xs), max(xs)
+    top, bottom = min(ys), max(ys)
+    head = struct.pack("<IHhhhhHI", 0x9AC6CDD7, 0, left, top, right, bottom, 1440, 0)
+    chk = 0
+    for (w,) in struct.iter_unpack("<H", head):
+        chk ^= w
+    return head + struct.pack("<H", chk) + data
+
+
+def metafile_to_png_native(data, kind, width, height, workdir):
+    """WMF/EMF -> transparent PNG with Windows' own drawing engine (GDI+) through pubconv."""
+    tool = find_pubconv()
+    if not tool or os.name != "nt":
+        return None
+    src = os.path.join(workdir, f"m{abs(hash(data)) % 10**8}.{kind}")
+    out = src + ".png"
+    with open(src, "wb") as f:
+        f.write(wmf_placeable(data) if kind == "wmf" else data)
+    try:
+        r = _run_tool([tool, "--meta", src, out, str(width), str(height)], timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not os.path.exists(out):
+        return None
+    with open(out, "rb") as f:
+        return f.read()
+
+
+# ---------------------------------------------------------------------------
+# LibreOffice discovery / conversion (optional fallback)
 # ---------------------------------------------------------------------------
 def find_soffice():
     names = ["soffice.exe", "soffice.com"] if os.name == "nt" else ["soffice", "libreoffice"]
@@ -103,6 +198,21 @@ def rasterize_metafiles(doc, tmp):
         return
     mdir = os.path.join(tmp, "meta")
     os.makedirs(mdir, exist_ok=True)
+    left = []
+    for it, k in jobs:
+        width = int(min(max(abs(it.w) * 4, 200), 2400))
+        height = max(int(width * abs(it.h) / max(abs(it.w), 1)), 1)
+        png = None
+        if k in ("wmf", "emf"):
+            png = metafile_to_png_native(it.image, k, width, height, mdir)
+        if png:
+            it.image = png
+            it.image_name = "clipart.png"
+        else:
+            left.append((it, k))
+    jobs = left
+    if not jobs or not find_soffice():
+        return
     srcs = []
     for n, (it, k) in enumerate(jobs):
         src = os.path.join(mdir, f"img{n}.{k}")
@@ -431,9 +541,14 @@ class FodgReader:
     def para_runs(self, p, base):
         runs = []
 
+        def plain(t):
+            # ODF: raw whitespace (spaces, tabs, line ends) in text collapses to one space;
+            # real spaces, tabs and line breaks come as <text:s>, <text:tab>, <text:line-break>
+            return re.sub(r"[ \t\r\n]+", " ", t)
+
         def walk(el, style_name):
             if el.text:
-                add(el.text, style_name)
+                add(plain(el.text), style_name)
             for ch in el:
                 tag = ch.tag
                 if tag == q("text:span"):
@@ -449,7 +564,7 @@ class FodgReader:
                 else:
                     walk(ch, style_name)
                 if ch.tail:
-                    add(ch.tail, style_name)
+                    add(plain(ch.tail), style_name)
 
         def add(t, style_name):
             proto = self.text_run_style(style_name, base) if style_name else Run("", **base)
@@ -711,16 +826,29 @@ def merge_fill_outline(items):
     return out
 
 
+def can_import():
+    """True when a Publisher-made file can be opened (bundled reader or LibreOffice)."""
+    return bool(find_pubconv() or find_soffice())
+
+
 def import_pub(path, mode="editable"):
     tmp = tempfile.mkdtemp(prefix="pubdesign_imp_")
     try:
-        # LibreOffice is picky about odd characters in file names; work on a copy
+        # work on a copy with a plain name (odd characters in names upset the converters)
         src = os.path.join(tmp, "input" + os.path.splitext(path)[1].lower())
         shutil.copyfile(path, src)
         if mode == "pictures":
+            if not find_soffice():
+                raise ImportError_("Opening a Publisher file as pictures needs LibreOffice (free). Use File ▸ Open "
+                                   "to open it normally, or install LibreOffice from https://www.libreoffice.org.")
             pdf = convert(src, "pdf", tmp)
             return pdf_to_picture_doc(pdf)
-        fodg = convert(src, "fodg", tmp)
+        fodg = pubconv_to_fodg(src, tmp)            # bundled Publisher reader
+        if fodg is None:
+            if not find_soffice():
+                raise ImportError_("PubDesign couldn't read this Publisher file. It may be damaged or made in a "
+                                   "very old version of Publisher (97 or earlier).")
+            fodg = convert(src, "fodg", tmp)        # LibreOffice, if it happens to be installed
         doc = FodgReader(fodg).document()
         rasterize_metafiles(doc, tmp)
         return doc

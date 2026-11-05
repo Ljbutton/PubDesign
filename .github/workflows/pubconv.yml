@@ -1,0 +1,44 @@
+name: Test Publisher reader
+
+on:
+  push:
+    branches: [main]
+    paths: ["tools/pubconv/**", ".github/workflows/pubconv.yml"]
+  workflow_dispatch:
+
+jobs:
+  pubconv:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libmspub
+            mingw-w64-ucrt-x86_64-libodfgen
+
+      - name: Build pubconv
+        shell: msys2 {0}
+        run: bash tools/pubconv/build_windows.sh
+
+      - name: Test pubconv
+        shell: pwsh
+        run: |
+          $b = "tools\pubconv\build"
+          & "$b\pubconv.exe" template.pub "$env:RUNNER_TEMP\t.fodg"
+          if ($LASTEXITCODE -ne 0) { Write-Error "pub conversion failed ($LASTEXITCODE)"; exit 1 }
+          Write-Host "fodg bytes:" (Get-Item "$env:RUNNER_TEMP\t.fodg").Length
+          python -c "import sys; sys.path.insert(0,'.'); import pub_import as P; d=open(r'$b\test.wmf','rb').read(); open(r'$env:RUNNER_TEMP\t.wmf','wb').write(P.wmf_placeable(d))"
+          & "$b\pubconv.exe" --meta "$env:RUNNER_TEMP\t.wmf" "$env:RUNNER_TEMP\t.png" 300 240
+          if ($LASTEXITCODE -ne 0) { Write-Error "picture conversion failed ($LASTEXITCODE)"; exit 1 }
+          Write-Host "png bytes:" (Get-Item "$env:RUNNER_TEMP\t.png").Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pubconv
+          path: tools/pubconv/build

@@ -29,7 +29,7 @@ from ribbon import (Ribbon, ColorMenu, ShapeMenu, Ruler, TitleBar, large_button,
                     ACCENT, ACCENT_DARK, CHROME)
 from pubwriter import write_pub
 from pubreader import read_pub, is_own_file
-from pub_import import import_pub, ImportError_, find_soffice
+from pub_import import import_pub, ImportError_, find_soffice, find_pubconv, can_import
 import updater
 
 APP = "PubDesign"
@@ -398,15 +398,14 @@ class Backstage(QWidget):
         ed = self.editor
         uf = unit_factor(ed.doc.unit)
         name = os.path.basename(ed.path) if ed.path else "Publication1 (not saved yet)"
-        lo = find_soffice()
+        reader = "built in ✓" if find_pubconv() else ("through LibreOffice ✓" if find_soffice() else "<b>not available</b>")
         self.info_label.setText(
             f"<b style='font-size:14pt'>{name}</b><br>{ed.path or ''}<br><br>"
             f"PubDesign version {VERSION}<br>"
             f"Pages: {len(ed.doc.pages)}<br>"
             f"Page size: {round(ed.doc.width / uf, 2):g} × {round(ed.doc.height / uf, 2):g} {ed.doc.unit}<br><br>"
             f"Publications are saved in Microsoft Publisher format (.pub).<br>"
-            f"Files made in Microsoft Publisher open through LibreOffice: "
-            f"{'<span style=color:#077568>installed ✓</span>' if lo else '<b>not installed</b>'}")
+            f"Reader for files made in Microsoft Publisher: <span style=color:#077568>{reader}</span>")
 
     def _new_page(self):
         w, v = self._page("New")
@@ -2668,20 +2667,23 @@ class MainWindow(QMainWindow):
         return box.get("result")
 
     def _read_pub(self, path, mode):
-        """PubDesign-made .pub -> native reader; Publisher-made -> LibreOffice (native reader as a backup)."""
+        """PubDesign-made .pub -> native reader; Publisher-made -> bundled Publisher reader (LibreOffice if
+        that fails and it is installed; PubDesign's native reader as a last resort)."""
         if mode == "pictures":
             return import_pub(path, mode="pictures"), None
         if is_own_file(path):
             return read_pub(path), None
-        if find_soffice():
-            return import_pub(path), ("Opened a file made in Microsoft Publisher. If anything looks off, use "
-                                      "File ▸ Open ▸ Open a Publisher file as pictures for an exact copy.")
+        if can_import():
+            try:
+                return import_pub(path), "Opened a file made in Microsoft Publisher."
+            except ImportError_:
+                pass
         try:
-            return read_pub(path), ("LibreOffice isn't installed, so this Publisher file was read with PubDesign's "
-                                    "built-in reader. Tables, grouped objects and WordArt may be missing.")
+            return read_pub(path), ("This Publisher file was read with PubDesign's simple reader. Tables, grouped "
+                                    "objects and WordArt may be missing.")
         except Exception:
-            raise ImportError_("This file was made in Microsoft Publisher and uses features that need LibreOffice "
-                               "(free) to open.\nInstall it from https://www.libreoffice.org, then try again.")
+            raise ImportError_("PubDesign couldn't read this Publisher file. It may be damaged or made in a very "
+                               "old version of Publisher (97 or earlier).")
 
     def open_path(self, path, checked=False, mode="editable"):
         if not checked and not self.maybe_save():
@@ -2691,7 +2693,7 @@ class MainWindow(QMainWindow):
         try:
             if ext == ".pub":
                 msg = "Opening…" if is_own_file(path) else \
-                    "Opening a Microsoft Publisher file…\nThis can take up to a minute the first time."
+                    "Opening a Microsoft Publisher file…"
                 doc, note = self._run_busy(lambda: self._read_pub(path, mode), msg)
                 self.close_backstage()
                 self.load_document(doc, path if mode != "pictures" else None)
@@ -2712,6 +2714,10 @@ class MainWindow(QMainWindow):
         box.setWindowTitle(APP)
         box.setIcon(QMessageBox.Warning)
         box.setText(msg)
+        if "LibreOffice" not in msg:
+            box.addButton(QMessageBox.Ok)
+            box.exec()
+            return
         inst = box.addButton("Install LibreOffice for me", QMessageBox.ActionRole) if os.name == "nt" else None
         dl = box.addButton("Open download page", QMessageBox.ActionRole)
         box.addButton(QMessageBox.Close)
@@ -2889,7 +2895,8 @@ class MainWindow(QMainWindow):
             box.setIconPixmap(QPixmap(asset("logo.png")).scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         box.setText(f"<b>{APP} {VERSION}</b><br>Desktop publishing with Microsoft Publisher (.pub) files.<br><br>"
                     "PubDesign reads and writes .pub files with its own reverse-engineered engine. Files made "
-                    "in Microsoft Publisher are opened through free LibreOffice when it is installed.<br><br>"
+                    "in Microsoft Publisher open with the built-in libmspub reader (MPL 2.0) from the "
+                    "LibreOffice project.<br><br>"
                     f"<a href='https://github.com/{updater.REPO}'>github.com/{updater.REPO}</a>")
         box.exec()
         return

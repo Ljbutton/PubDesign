@@ -7,6 +7,10 @@ datas = [
     ("version.json", "."),
     ("assets", "assets"),
 ]
+# bundled Microsoft Publisher reader (built by tools/pubconv/build_windows.sh)
+import os
+if os.path.isdir(os.path.join("tools", "pubconv", "build")):
+    datas.append((os.path.join("tools", "pubconv", "build"), "pubconv"))
 
 a = Analysis(
     ["app.py"],
