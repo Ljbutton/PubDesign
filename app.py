@@ -5,7 +5,7 @@ import os
 import sys
 import traceback
 
-from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize, QTimer, QMarginsF, QSettings, QUrl, QMimeData
+from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize, QTimer, QMarginsF, QSettings, QUrl, QMimeData, QEvent
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPageSize, QPageLayout, QPdfWriter,
                            QPixmap, QTextCursor, QDesktopServices, QTextCharFormat, QTextBlockFormat, QPen,
                            QGuiApplication)
@@ -925,10 +925,26 @@ class WindowFrame(QWidget):
         self.lay = QVBoxLayout(self)
         self.lay.setSpacing(0)
         self.sync()
+        if frameless:
+            # the resize cursor set on this border is inherited by everything inside it, so clear it
+            # as soon as the pointer moves onto any other part of the window
+            QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (QEvent.Enter, QEvent.MouseMove) and self.testAttribute(Qt.WA_SetCursor) \
+                and isinstance(obj, QWidget) and obj is not self and self.isAncestorOf(obj):
+            self.unsetCursor()
+        return False
+
+    def leaveEvent(self, ev):
+        self.unsetCursor()
+        super().leaveEvent(ev)
 
     def sync(self):
         m = self.GRIP if (self.frameless and not self.win.isMaximized() and not self.win.isFullScreen()) else 0
         self.lay.setContentsMargins(m, m, m, m)
+        if not m:
+            self.unsetCursor()
         self.setStyleSheet(f"#WindowFrame {{ background: {CHROME}; border: {1 if m else 0}px solid #b9b9b9; }}")
 
     def _edges(self, pos):

@@ -1,4 +1,4 @@
 {
-  "version": "2.2.3",
-  "notes": "Updates now download in the background and install by themselves when you close PubDesign. No Command Prompt window."
+  "version": "2.2.4",
+  "notes": "Fixes the mouse pointer getting stuck as a resize arrow."
 }
