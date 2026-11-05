@@ -32,6 +32,7 @@ from pubwriter import write_pub
 from pubreader import read_pub, is_own_file
 from pub_import import import_pub, ImportError_, find_soffice, find_pubconv, can_import
 import updater
+import anim
 
 APP = "PubDesign"
 VERSION = updater.local_version()
@@ -116,7 +117,7 @@ class PageView(QGraphicsView):
     def wheelEvent(self, ev):
         if ev.modifiers() & Qt.ControlModifier:
             f = 1.15 if ev.angleDelta().y() > 0 else 1 / 1.15
-            self.editor.set_zoom(self.transform().m11() * f)
+            self.editor.zoom_smooth(self.editor.zoom_target() * f)
             return
         super().wheelEvent(ev)
 
@@ -430,6 +431,15 @@ class Backstage(QWidget):
         head = QLabel("Window")
         head.setObjectName("SectionHead")
         v.addWidget(head)
+        self.anim_chk = QCheckBox("Play animations (smooth transitions, sliding menus and zoom)")
+        self.anim_chk.setChecked(self.editor.settings.value("animations", True, type=bool))
+
+        def anim_toggled(on):
+            self.editor.settings.setValue("animations", on)
+            anim.set_enabled(on)
+            anim.enable_menu_effects()
+        self.anim_chk.toggled.connect(anim_toggled)
+        v.addWidget(self.anim_chk)
         self.classic_chk = QCheckBox("Use the standard Windows title bar (takes effect next time PubDesign starts)")
         self.classic_chk.setChecked(self.editor.settings.value("classic_titlebar", False, type=bool))
         self.classic_chk.toggled.connect(lambda on: self.editor.settings.setValue("classic_titlebar", on))
@@ -1153,7 +1163,7 @@ class Backstage(QWidget):
         v.addStretch()
         return w
 
-    def show_page(self, key):
+    def show_page(self, key, animate=True):
         ed = self.editor
         if key == "save":
             ed.close_backstage()
@@ -1173,7 +1183,10 @@ class Backstage(QWidget):
             self.refresh_home()
         elif key == "options":
             self.about_label.setText(f"PubDesign {VERSION}  ·  github.com/{updater.REPO}")
-        self.body.setCurrentWidget(self.pages[key])
+        if animate:
+            anim.switch_stack_widget(self.body, self.pages[key], dy=22, duration=anim.NORMAL)
+        else:
+            self.body.setCurrentWidget(self.pages[key])
         if key == "print":
             self.orient_combo.blockSignals(True)
             self.orient_combo.setCurrentIndex(1 if ed.doc.width > ed.doc.height else 0)
@@ -1482,7 +1495,8 @@ class MainWindow(QMainWindow):
         if notes:
             txt += f" &nbsp; <span style='color:#555'>{notes}</span>"
         self.msg_label.setText(txt)
-        self.msgbar.setVisible(True)
+        if not self.msgbar.isVisible():
+            anim.animate_height(self.msgbar, True)
         if self.downloader is not None and self._ready_setup is None:
             # get it ready in the background; it installs when PubDesign closes
             self.downloader.start()
@@ -1495,7 +1509,8 @@ class MainWindow(QMainWindow):
         self.msg_label.setText(f"<b>UPDATE READY</b> &nbsp; PubDesign {version} is downloaded. It installs "
                                "automatically when you close PubDesign, or click Restart now.")
         self.msg_btn.setText("Restart now")
-        self.msgbar.setVisible(True)
+        if not self.msgbar.isVisible():
+            anim.animate_height(self.msgbar, True)
 
     def _up_to_date(self, v):
         if self._manual_check:
@@ -1623,8 +1638,8 @@ class MainWindow(QMainWindow):
         S("Alt+Q", lambda: (self.titlebar.search.setFocus(), self.titlebar.search.selectAll()))
         S("Ctrl+F1", lambda: self.ribbon.toggle_collapsed())
         S("Ctrl+Shift+L", self.whole_page)
-        S("Ctrl+=", lambda: self.set_zoom(self.view.transform().m11() * 1.25))
-        S("Ctrl+-", lambda: self.set_zoom(self.view.transform().m11() / 1.25))
+        S("Ctrl+=", lambda: self.zoom_smooth(self.zoom_target() * 1.25))
+        S("Ctrl+-", lambda: self.zoom_smooth(self.zoom_target() / 1.25))
 
     def _build_ribbon(self):
         R = self.ribbon
@@ -1785,8 +1800,8 @@ class MainWindow(QMainWindow):
         g.add(large_button("100%", "zoom100", self.zoom_100, tip="Actual size (F9)"))
         g.add(large_button("Whole\nPage", "zoom_page", self.whole_page, tip="Whole page (Ctrl+Shift+L)"))
         g.add(large_button("Page\nWidth", "zoom_width", self.page_width))
-        g.column(small_button("Zoom In", "zoom_in", lambda: self.set_zoom(self.view.transform().m11() * 1.25)),
-                 small_button("Zoom Out", "zoom_out", lambda: self.set_zoom(self.view.transform().m11() / 1.25)))
+        g.column(small_button("Zoom In", "zoom_in", lambda: self.zoom_smooth(self.zoom_target() * 1.25)),
+                 small_button("Zoom Out", "zoom_out", lambda: self.zoom_smooth(self.zoom_target() / 1.25)))
 
         # ---------------- contextual: Shape Format ----------------
         sf = R.add_page("Shape Format", contextual=True)
@@ -1915,8 +1930,8 @@ class MainWindow(QMainWindow):
         self.zoom_pct = QLabel("100%")
         self.zoom_pct.setFixedWidth(42)
         fit = small_button("", "zoom_page", self.whole_page, tip="Whole Page (Ctrl+Shift+L)", text_visible=False)
-        zo = small_button("−", None, lambda: self.set_zoom(self.view.transform().m11() / 1.1), tip="Zoom Out")
-        zi = small_button("+", None, lambda: self.set_zoom(self.view.transform().m11() * 1.1), tip="Zoom In")
+        zo = small_button("−", None, lambda: self.zoom_smooth(self.zoom_target() / 1.1), tip="Zoom Out")
+        zi = small_button("+", None, lambda: self.zoom_smooth(self.zoom_target() * 1.1), tip="Zoom In")
         for w in (fit, zo, self.zoom_slider, zi, self.zoom_pct):
             sb.addPermanentWidget(w)
 
@@ -2863,6 +2878,33 @@ class MainWindow(QMainWindow):
     def zoom_factor_display(self):
         return self.view.transform().m11() * 72 / QApplication.primaryScreen().logicalDotsPerInch()
 
+    def zoom_smooth(self, z):
+        """Glide to a zoom level (Office-style) instead of jumping."""
+        z = max(0.03, min(z, 16))
+        cur = self.view.transform().m11()
+        if not anim.enabled_for(self.view) or abs(z - cur) < 1e-4:
+            self.set_zoom(z)
+            return
+        a = getattr(self, "_zoom_anim", None)
+        if a is not None:
+            a.stop()
+        from PySide6.QtCore import QVariantAnimation, QEasingCurve
+        a = QVariantAnimation(self)
+        a.setStartValue(float(cur))
+        a.setEndValue(float(z))
+        a.setDuration(140)
+        a.setEasingCurve(QEasingCurve.OutCubic)
+        a.valueChanged.connect(lambda v: self.set_zoom(float(v)))
+        self._zoom_anim = a
+        self._zoom_target = z
+        a.start()
+
+    def zoom_target(self):
+        a = getattr(self, "_zoom_anim", None)
+        if a is not None and a.state() == a.State.Running:
+            return self._zoom_target
+        return self.view.transform().m11()
+
     def set_zoom(self, z):
         z = max(0.03, min(z, 16))
         self.view.setTransform(self.view.transform().fromScale(z, z))
@@ -2880,7 +2922,7 @@ class MainWindow(QMainWindow):
         self.set_zoom(v / 100 * QApplication.primaryScreen().logicalDotsPerInch() / 72)
 
     def zoom_100(self):
-        self.set_zoom(QApplication.primaryScreen().logicalDotsPerInch() / 72)
+        self.zoom_smooth(QApplication.primaryScreen().logicalDotsPerInch() / 72)
 
     def whole_page(self):
         vp = self.view.viewport().rect()
@@ -2928,11 +2970,20 @@ class MainWindow(QMainWindow):
         if not isinstance(page, str):
             page = "home"
         self.checkpoint()
-        self.stack.setCurrentIndex(1)
-        self.backstage.show_page(page)
+        if self.stack.currentIndex() == 1:
+            self.backstage.show_page(page)
+            return
+
+        def change():
+            self.stack.setCurrentIndex(1)
+            self.backstage.show_page(page, animate=False)
+        # File menu slides in from the left, like Office
+        anim.transition(self.stack, change, dx=-90, duration=anim.NORMAL)
 
     def close_backstage(self):
-        self.stack.setCurrentIndex(0)
+        if self.stack.currentIndex() == 0:
+            return
+        anim.transition(self.stack, lambda: self.stack.setCurrentIndex(0), dx=60, duration=anim.FAST)
 
     # ================= files =================
     def recent_files(self):
@@ -3429,7 +3480,10 @@ def main():
     f.setFamily("Segoe UI")
     app.setFont(f)
     app.setWindowIcon(app_icon())
+    anim.set_enabled(QSettings("PubDesign", "PubDesign").value("animations", True, type=bool))
+    anim.enable_menu_effects()
     win = MainWindow()
+    anim.fade_in_window(win)
     win.show()
     args = [x for x in sys.argv[1:] if not x.startswith("-")]
     if args and os.path.exists(args[0]):

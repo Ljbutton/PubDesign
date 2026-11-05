@@ -28,6 +28,7 @@ You can also check by hand under **File ▸ Info ▸ Check for Updates**.
 - Office-style title bar with Save, Undo and Redo, plus a **Search** box (Alt+Q) that finds any command
 - Publisher-style ribbon: **File**, **Home**, **Insert**, **Page Design** and **View**, plus
   **Shape Format**, **Text Box** and **Picture Format** tabs when something is selected
+- Smooth Office-style animations (File menu, ribbon tabs, zoom, menus); can be turned off in File ▸ Options
 - Collapsible ribbon (Ctrl+F1) and an **Export** button for PDF, pictures and printing
 - Page thumbnails, rulers, margin guides, zoom slider and Publisher's keyboard shortcuts
 - Text boxes with fonts, sizes, bold/italic/underline, colors, alignment and bullets
@@ -77,6 +78,7 @@ python -m venv .venv
 | `pubblocks.py`, `escher.py`, `quill.py`, `fkp.py`, `cfb.py` | `.pub` file-format internals |
 | `pub_import.py`, `tools/pubconv/` | Opening Publisher-made files (bundled reader) |
 | `updater.py`, `version.json` | Update checks and installs |
+| `anim.py` | Transitions and animations |
 | `templates.py` | Starter designs and page sizes |
 | `pubdesign.spec`, `installer.iss`, `.github/workflows/build.yml` | Windows build and installer |
 | `assets/` | Logo and icon (`tools/make_logo.py` regenerates them) |

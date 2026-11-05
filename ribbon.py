@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QWidget, QFrame, QHBoxLayout, QVBoxLayout, QGridL
                                QStackedWidget, QMenu, QWidgetAction, QSizePolicy, QPushButton, QLineEdit,
                                QCompleter, QGraphicsDropShadowEffect)
 
+import anim
 import icons
 import autoshapes
 
@@ -301,15 +302,17 @@ class Ribbon(QWidget):
         self._place_collapse()
 
     def _tab_changed(self, i):
-        self.stack.setCurrentIndex(i)
+        prev = self.stack.currentIndex()
         if self.collapsed:
+            self.stack.setCurrentIndex(i)
             self.toggle_collapsed()
+            return
+        # like Office: the new tab's commands slide in from the side of the tab you clicked
+        anim.switch_stack(self.stack, i, dx=28 if i > prev else -28, duration=anim.FAST)
 
     def toggle_collapsed(self):
         self.collapsed = not self.collapsed
-        self.card.setVisible(not self.collapsed)
-        if not self.collapsed:
-            self._place_collapse()
+        anim.animate_height(self.card, not self.collapsed, on_done=self._place_collapse)
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.MouseButtonDblClick and obj in self.tabs.buttons:
