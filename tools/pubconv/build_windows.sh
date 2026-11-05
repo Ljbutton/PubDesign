@@ -11,7 +11,9 @@ mkdir -p build
 g++ -O2 -std=c++17 pubconv.cpp -o build/pubconv.exe $FLAGS -lgdiplus
 # copy every MSYS2 DLL the exe needs (repeat to pick up dependencies of dependencies)
 for pass in 1 2 3 4; do
-    ldd build/pubconv.exe build/*.dll 2>/dev/null | awk '/\/ucrt64\// {print $3}' | sort -u | while read -r dll; do
+    shopt -s nullglob
+    deps="$( (ldd build/pubconv.exe build/*.dll 2>/dev/null || true) | awk '/\/ucrt64\// {print $3}' | sort -u)"
+    for dll in $deps; do
         [ -f "build/$(basename "$dll")" ] || cp "$dll" build/
     done
 done
