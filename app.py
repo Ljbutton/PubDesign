@@ -2636,6 +2636,37 @@ class MainWindow(QMainWindow):
         if path:
             self.open_path(path, checked=True, mode="pictures")
 
+    def _run_busy(self, fn, text):
+        """Run fn in a background thread while a progress window keeps PubDesign responsive
+        (so Windows doesn't flag it as 'Not Responding'). Re-raises fn's exception."""
+        import threading
+        from PySide6.QtCore import QEventLoop
+        box = {}
+
+        def work():
+            try:
+                box["result"] = fn()
+            except BaseException as e:  # noqa: B036 - handed back to the UI thread
+                box["error"] = e
+        t = threading.Thread(target=work, daemon=True)
+        prog = QProgressDialog(text, None, 0, 0, self)
+        prog.setWindowTitle(APP)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(300)
+        prog.setCancelButton(None)
+        t.start()
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.timeout.connect(lambda: (not t.is_alive()) and loop.quit())
+        timer.start(50)
+        if t.is_alive():
+            loop.exec()
+        timer.stop()
+        prog.close()
+        if "error" in box:
+            raise box["error"]
+        return box.get("result")
+
     def _read_pub(self, path, mode):
         """PubDesign-made .pub -> native reader; Publisher-made -> LibreOffice (native reader as a backup)."""
         if mode == "pictures":
@@ -2659,14 +2690,9 @@ class MainWindow(QMainWindow):
         ext = os.path.splitext(path)[1].lower()
         try:
             if ext == ".pub":
-                prog = QProgressDialog("Opening…", None, 0, 0, self)
-                prog.setWindowModality(Qt.WindowModal)
-                prog.setMinimumDuration(400)
-                QApplication.processEvents()
-                try:
-                    doc, note = self._read_pub(path, mode)
-                finally:
-                    prog.close()
+                msg = "Opening…" if is_own_file(path) else \
+                    "Opening a Microsoft Publisher file…\nThis can take up to a minute the first time."
+                doc, note = self._run_busy(lambda: self._read_pub(path, mode), msg)
                 self.close_backstage()
                 self.load_document(doc, path if mode != "pictures" else None)
                 if note:
@@ -2951,9 +2977,64 @@ def selftest():
     sys.exit(0 if ok else 1)
 
 
+def log_dir():
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    d = os.path.join(base, "PubDesign")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+_crash_file = None
+
+
+def install_crash_logging():
+    """Write errors to %LOCALAPPDATA%\\PubDesign\\crash.log and show them instead of closing silently."""
+    global _crash_file
+    import faulthandler
+    import datetime
+    try:
+        path = os.path.join(log_dir(), "crash.log")
+        if os.path.exists(path) and os.path.getsize(path) > 2_000_000:
+            os.replace(path, path + ".old")
+        _crash_file = open(path, "a", encoding="utf-8", buffering=1)
+        _crash_file.write(f"\n=== PubDesign {VERSION} started {datetime.datetime.now():%Y-%m-%d %H:%M:%S} ===\n")
+        faulthandler.enable(file=_crash_file, all_threads=True)
+        if sys.stderr is None:      # windowed build: send stray output to the log
+            sys.stderr = _crash_file
+        if sys.stdout is None:
+            sys.stdout = _crash_file
+    except Exception:
+        _crash_file = None
+
+    def hook(etype, value, tb):
+        text = "".join(traceback.format_exception(etype, value, tb))
+        try:
+            if _crash_file:
+                _crash_file.write(text)
+        except Exception:
+            pass
+        try:
+            QMessageBox.critical(QApplication.activeWindow(), APP,
+                                 f"Something went wrong, but PubDesign kept running.\n\n{value}\n\n"
+                                 f"Details were saved to {os.path.join(log_dir(), 'crash.log')}")
+        except Exception:
+            pass
+    sys.excepthook = hook
+    import threading
+
+    def thread_hook(a):  # background threads: log only (no windows outside the UI thread)
+        try:
+            if _crash_file:
+                _crash_file.write("".join(traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback)))
+        except Exception:
+            pass
+    threading.excepthook = thread_hook
+
+
 def main():
     if "--selftest" in sys.argv:
         selftest()
+    install_crash_logging()
     if hasattr(Qt, "HighDpiScaleFactorRoundingPolicy"):
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     updater.mark_running()

@@ -1,4 +1,4 @@
 {
-  "version": "2.2.5",
-  "notes": "Fixes resize and move arrows staying stuck on the page while selecting and editing text."
+  "version": "2.2.6",
+  "notes": "Opens Publisher files with tables, no more freezing while opening Publisher files, and errors are saved to a log instead of closing PubDesign."
 }

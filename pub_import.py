@@ -103,35 +103,41 @@ def rasterize_metafiles(doc, tmp):
         return
     mdir = os.path.join(tmp, "meta")
     os.makedirs(mdir, exist_ok=True)
+    srcs = []
     for n, (it, k) in enumerate(jobs):
         src = os.path.join(mdir, f"img{n}.{k}")
         with open(src, "wb") as f:
             f.write(it.image)
+        srcs.append(src)
+    # one LibreOffice start for every picture (each start takes several seconds on Windows)
+    try:
+        convert_many(srcs, "svg", mdir, timeout=180)
+    except ImportError_:
+        pass
+    for n, (it, k) in enumerate(jobs):
         width = int(min(max(abs(it.w) * 4, 200), 2400))
-        try:
-            png = _metafile_via_svg(src, mdir, width, abs(it.h) / max(abs(it.w), 1))
-            if png is None:
+        svg = os.path.splitext(srcs[n])[0] + ".svg"
+        png = _render_svg(svg, width, abs(it.h) / max(abs(it.w), 1)) if os.path.exists(svg) else None
+        if png is None:
+            try:
                 fmt = 'png:draw_png_Export:{"PixelWidth":{"type":"long","value":"%d"}}' % width
-                out = convert(src, fmt, mdir, timeout=120)
+                out = convert(srcs[n], fmt, mdir, timeout=120)
                 with open(out, "rb") as f:
                     png = f.read()
+            except (ImportError_, OSError):
+                png = None
+        if png:
             it.image = png
             it.image_name = f"clipart{n + 1}.png"
-        except ImportError_:
-            pass
 
 
-def _metafile_via_svg(src, outdir, width, aspect):
-    """Render a metafile through SVG so transparency is kept. Returns PNG bytes or None."""
+def _render_svg(svg, width, aspect):
+    """Render an SVG made from a metafile so transparency is kept. Returns PNG bytes or None."""
     try:
         from PySide6.QtSvg import QSvgRenderer
         from PySide6.QtGui import QImage, QPainter
         from PySide6.QtCore import Qt, QByteArray, QBuffer, QIODevice
     except ImportError:
-        return None
-    try:
-        svg = convert(src, "svg", outdir, timeout=120)
-    except ImportError_:
         return None
     r = QSvgRenderer(svg)
     if not r.isValid():
@@ -149,6 +155,35 @@ def _metafile_via_svg(src, outdir, width, aspect):
     return bytes(ba)
 
 
+def convert_many(srcs, fmt, outdir, timeout=240):
+    """Convert several files in one LibreOffice run."""
+    if not srcs:
+        return
+    soffice = find_soffice()
+    if not soffice:
+        raise ImportError_("LibreOffice was not found.")
+    profile = tempfile.mkdtemp(prefix="pubdesign_lo_")
+    try:
+        import pathlib
+        cmd = [soffice, f"-env:UserInstallation={pathlib.Path(profile).as_uri()}", "--headless", "--norestore",
+               "--convert-to", fmt, "--outdir", outdir] + list(srcs)
+        _run(cmd, timeout)
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+def _run(cmd, timeout):
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+    try:
+        subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        raise ImportError_("LibreOffice took too long to read this file. Try File ▸ Open ▸ Open a Publisher "
+                           "file as pictures, or open it again.")
+
+
 def convert(src, fmt, outdir, timeout=240):
     soffice = find_soffice()
     if not soffice:
@@ -160,10 +195,7 @@ def convert(src, fmt, outdir, timeout=240):
         prof_url = pathlib.Path(profile).as_uri()
         cmd = [soffice, f"-env:UserInstallation={prof_url}", "--headless", "--norestore",
                "--convert-to", fmt, "--outdir", outdir, src]
-        kw = {}
-        if os.name == "nt":
-            kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, **kw)
+        _run(cmd, timeout)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
     base = os.path.splitext(os.path.basename(src))[0]
@@ -516,7 +548,10 @@ class FodgReader:
             tb = el.find(q("draw:text-box"))
             im = el.find(q("draw:image"))
             tbl = el.find(q("table:table"))
-            if tb is not None:
+            if tbl is not None:
+                # a table frame also carries a preview picture of the table; use the real cells
+                self.convert_table(tbl, x, y, w, h, out)
+            elif tb is not None:
                 out.append(Item(kind="text", x=x, y=y, w=w, h=h, rotation=rot, fill=fill, stroke=stroke,
                                 stroke_width=sw, paras=self.paragraphs(tb), valign=valign))
             elif im is not None:
@@ -526,8 +561,6 @@ class FodgReader:
                     data = base64.b64decode(bd.text)
                 if data:
                     out.append(Item(kind="image", x=x, y=y, w=w, h=h, rotation=rot, image=data, image_name="picture"))
-            elif tbl is not None:
-                self.convert_table(tbl, x, y, w, h, out)
             return
         if tag in (q("draw:polygon"), q("draw:polyline"), q("draw:path"), q("draw:rect"),
                    q("draw:ellipse"), q("draw:circle"), q("draw:custom-shape")):
@@ -608,19 +641,43 @@ class FodgReader:
         for r, rh in zip(rows, heights):
             xx = x
             ci = 0
+            row_default = r.get(q("table:default-cell-style-name"))
             for cell in r:
                 if cell.tag not in (q("table:table-cell"), q("table:covered-table-cell")):
                     continue
                 span = int(cell.get(q("table:number-columns-spanned")) or 1)
                 cw = sum(cols[ci:ci + span]) if ci < len(cols) else 50
                 if cell.tag == q("table:table-cell"):
-                    st = cell.get(q("table:style-name"))
-                    bg = color(self.prop("table-cell", st, "style:table-cell-properties", "fo:background-color"))
-                    out.append(Item(kind="text", x=xx, y=yy, w=cw, h=rh, fill=bg, stroke=(0, 0, 0), stroke_width=0.75,
+                    st = cell.get(q("table:style-name")) or row_default
+                    bg, stroke, sw = self.cell_look(st)
+                    out.append(Item(kind="text", x=xx, y=yy, w=cw, h=rh, fill=bg, stroke=stroke, stroke_width=sw,
                                     paras=self.paragraphs(cell) or [Para([Run("")])]))
                 xx += cw
                 ci += span
             yy += rh
+
+    def cell_look(self, st):
+        """Background and border of a table cell (no border unless the file has one)."""
+        bg = None
+        for el in ("style:table-cell-properties", "loext:graphic-properties"):
+            fc = self.prop("table-cell", st, el, "fo:background-color")
+            if fc and fc != "transparent":
+                bg = color(fc)
+                break
+            if self.prop("table-cell", st, el, "draw:fill") == "solid":
+                bg = color(self.prop("table-cell", st, el, "draw:fill-color"))
+                break
+        stroke, sw = None, 1.0
+        for side in ("fo:border", "fo:border-top", "fo:border-left", "fo:border-bottom", "fo:border-right"):
+            b = self.prop("table-cell", st, "style:table-cell-properties", side)
+            if b and b != "none":
+                parts = b.split()
+                w = length(parts[0]) if parts else 0.75
+                if w > 0:
+                    stroke = color(parts[-1]) or (0, 0, 0)
+                    sw = max(w, 0.5)
+                    break
+        return bg, stroke, sw
 
     def document(self):
         pw, ph = self.page_size()
