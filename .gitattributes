@@ -1,0 +1,4 @@
+*.bat -text
+*.ps1 -text
+*.pub binary
+*.ico binary

@@ -1,0 +1,9 @@
+.venv/
+.previous/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+output/
+notes.txt
