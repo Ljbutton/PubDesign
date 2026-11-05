@@ -1,4 +1,4 @@
 {
-  "version": "2.2.4",
-  "notes": "Fixes the mouse pointer getting stuck as a resize arrow."
+  "version": "2.2.5",
+  "notes": "Fixes resize and move arrows staying stuck on the page while selecting and editing text."
 }

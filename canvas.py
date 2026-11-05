@@ -371,19 +371,9 @@ class ShapeItem(QGraphicsObject):
         return None
 
     # ---- interaction -----------------------------------------------------
-    def hoverMoveEvent(self, ev):
-        h = self.handle_at(ev.pos())
-        cursors = {self.H_TL: Qt.SizeFDiagCursor, self.H_BR: Qt.SizeFDiagCursor, self.H_TR: Qt.SizeBDiagCursor,
-                   self.H_BL: Qt.SizeBDiagCursor, self.H_T: Qt.SizeVerCursor, self.H_B: Qt.SizeVerCursor,
-                   self.H_L: Qt.SizeHorCursor, self.H_R: Qt.SizeHorCursor, self.H_ROT: Qt.CrossCursor,
-                   self.H_P1: Qt.SizeAllCursor, self.H_P2: Qt.SizeAllCursor}
-        if h is not None:
-            self.setCursor(cursors[h])
-        elif self.text is not None and self.text.textInteractionFlags() & Qt.TextEditorInteraction:
-            self.setCursor(Qt.IBeamCursor)
-        else:
-            self.setCursor(Qt.SizeAllCursor if self.isSelected() else Qt.ArrowCursor)
-        super().hoverMoveEvent(ev)
+    # the page view sets the pointer for every object (PageView.refresh_cursor); items never set
+    # their own, because Qt keeps an item's last cursor and that left resize/move arrows stuck
+    HANDLE_CURSORS = None
 
     def mousePressEvent(self, ev):
         h = self.handle_at(ev.pos())
@@ -515,6 +505,13 @@ class ShapeItem(QGraphicsObject):
             if not value:
                 self.end_edit()
         return super().itemChange(change, value)
+
+
+ShapeItem.HANDLE_CURSORS = {
+    ShapeItem.H_TL: Qt.SizeFDiagCursor, ShapeItem.H_BR: Qt.SizeFDiagCursor, ShapeItem.H_TR: Qt.SizeBDiagCursor,
+    ShapeItem.H_BL: Qt.SizeBDiagCursor, ShapeItem.H_T: Qt.SizeVerCursor, ShapeItem.H_B: Qt.SizeVerCursor,
+    ShapeItem.H_L: Qt.SizeHorCursor, ShapeItem.H_R: Qt.SizeHorCursor, ShapeItem.H_ROT: Qt.CrossCursor,
+    ShapeItem.H_P1: Qt.SizeAllCursor, ShapeItem.H_P2: Qt.SizeAllCursor}
 
 
 class PageScene(QGraphicsScene):

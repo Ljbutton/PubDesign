@@ -8,7 +8,7 @@ import traceback
 from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize, QTimer, QMarginsF, QSettings, QUrl, QMimeData, QEvent
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPageSize, QPageLayout, QPdfWriter,
                            QPixmap, QTextCursor, QDesktopServices, QTextCharFormat, QTextBlockFormat, QPen,
-                           QGuiApplication)
+                           QGuiApplication, QCursor)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QFileDialog, QMessageBox, QListWidget,
                                QListWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel,
                                QFontComboBox, QDoubleSpinBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
@@ -119,6 +119,43 @@ class PageView(QGraphicsView):
             return
         super().wheelEvent(ev)
 
+    # ---- one place decides the mouse pointer for the page (items never set their own) ----
+    def refresh_cursor(self, pos=None):
+        vp = self.viewport()
+        if pos is None:
+            pos = vp.mapFromGlobal(QCursor.pos())
+        ed = self.editor
+        if getattr(ed, "painter_fmt", None) is not None:
+            c = Qt.PointingHandCursor
+        elif getattr(ed, "tool", "select") != "select":
+            c = Qt.CrossCursor
+        else:
+            c = self._select_cursor(pos)
+        if not vp.testAttribute(Qt.WA_SetCursor) or vp.cursor().shape() != c:
+            vp.setCursor(c)
+
+    def _select_cursor(self, pos):
+        sc = self.scene()
+        if sc is None or not self.viewport().rect().contains(pos):
+            return Qt.ArrowCursor
+        sp = self.mapToScene(pos)
+        # resize/rotate handles of selected objects come first (they stick out past the object)
+        for it in sc.selectedItems():
+            if isinstance(it, ShapeItem):
+                h = it.handle_at(it.mapFromScene(sp))
+                if h is not None:
+                    return ShapeItem.HANDLE_CURSORS[h]
+        shape = self._shape_at(pos)
+        if shape is None or not getattr(shape, "editable", False):
+            return Qt.ArrowCursor
+        if shape.text is not None and shape.is_editing():
+            return Qt.IBeamCursor
+        return Qt.SizeAllCursor if shape.isSelected() else Qt.ArrowCursor
+
+    def enterEvent(self, ev):
+        super().enterEvent(ev)
+        self.refresh_cursor()
+
     def _shape_at(self, pos):
         item = self.itemAt(pos)
         while item is not None and not isinstance(item, ShapeItem):
@@ -145,6 +182,9 @@ class PageView(QGraphicsView):
             self._preview.setZValue(1e9)
             return
         super().mousePressEvent(ev)
+        if ev.button() == Qt.LeftButton:
+            # keep the pointer that matches what is being dragged (handle, move, text)
+            self.refresh_cursor(ev.position().toPoint())
 
     def _drag_end(self, sp, mods):
         s = self._create_start
@@ -166,6 +206,8 @@ class PageView(QGraphicsView):
                 self._preview.setRect(QRectF(self._create_start, end).normalized())
             return
         super().mouseMoveEvent(ev)
+        if not ev.buttons():
+            self.refresh_cursor(ev.position().toPoint())
 
     def mouseReleaseEvent(self, ev):
         if self._create_start is not None:
@@ -176,9 +218,11 @@ class PageView(QGraphicsView):
                 self.scene().removeItem(self._preview)
                 self._preview = None
             self.editor.create_from_drag(start, end)
+            self.refresh_cursor()
             return
         super().mouseReleaseEvent(ev)
         self.editor.checkpoint()
+        self.refresh_cursor(ev.position().toPoint())
 
     def contextMenuEvent(self, ev):
         item = self._shape_at(ev.pos())
@@ -1588,6 +1632,7 @@ class MainWindow(QMainWindow):
             self._add_shape(sc, it, z)
         self.scene = sc
         sc.selectionChanged.connect(self.selection_changed)
+        sc.selectionChanged.connect(lambda: QTimer.singleShot(0, self.view.refresh_cursor))
         self.view.setScene(sc)
         if old is not None:
             old.deleteLater()
@@ -1599,6 +1644,7 @@ class MainWindow(QMainWindow):
         si.setZValue(z)
         si.committed.connect(self.checkpoint)
         si.editingChanged.connect(lambda on: self.sync_toolbar())
+        si.editingChanged.connect(lambda on: QTimer.singleShot(0, self.view.refresh_cursor))
         if si.text is not None:
             si.text.document().cursorPositionChanged.connect(lambda *_: self.sync_toolbar())
         sc.addItem(si)
@@ -1876,7 +1922,7 @@ class MainWindow(QMainWindow):
             self.editing_shape().end_edit()
         self.tool = t
         self.view.setDragMode(QGraphicsView.RubberBandDrag if t == "select" else QGraphicsView.NoDrag)
-        self.view.viewport().setCursor(Qt.ArrowCursor if t == "select" else Qt.CrossCursor)
+        self.view.refresh_cursor()
         if t != "select":
             self.statusBar().showMessage("Click and drag on the page to draw. Hold Shift for even proportions.", 6000)
 
@@ -2003,13 +2049,13 @@ class MainWindow(QMainWindow):
                                 char=QTextCharFormat(cf) if cf is not None else None,
                                 align=qt_to_align(bf.alignment()) if bf is not None else None)
         self.painter_btn.setChecked(True)
-        self.view.viewport().setCursor(Qt.PointingHandCursor)
+        self.view.refresh_cursor()
         self.statusBar().showMessage("Click the object to apply the formatting to. Esc cancels.", 8000)
 
     def cancel_painter(self):
         self.painter_fmt = None
         self.painter_btn.setChecked(False)
-        self.view.viewport().setCursor(Qt.ArrowCursor)
+        self.view.refresh_cursor()
 
     def apply_painter(self, target):
         f = self.painter_fmt
