@@ -1,37 +1,48 @@
-"""Office-style ribbon, colour picker menus, shape gallery and rulers."""
-from PySide6.QtCore import Qt, Signal, QSize, QRectF, QPointF
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QFont, QAction
-from PySide6.QtWidgets import (QWidget, QFrame, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QToolButton, QStackedWidget, QMenu, QWidgetAction, QSizePolicy, QPushButton)
+"""Office-style title bar, ribbon, colour picker menus, shape gallery and rulers."""
+from PySide6.QtCore import Qt, Signal, QSize, QRectF, QPointF, QEvent
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QFont, QAction, QPainterPath
+from PySide6.QtWidgets import (QWidget, QFrame, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QToolButton,
+                               QStackedWidget, QMenu, QWidgetAction, QSizePolicy, QPushButton, QLineEdit,
+                               QCompleter, QGraphicsDropShadowEffect)
 
 import icons
 import autoshapes
 
 ACCENT = "#077568"
 ACCENT_DARK = "#055a50"
+CHROME = "#f3f3f3"   # title bar / tab row background (like Office)
 
 RIBBON_QSS = f"""
-#RibbonBar {{ background: #f3f3f3; border-bottom: 1px solid #d6d6d6; }}
-#RibbonTab {{ background: transparent; padding: 6px 14px 5px 14px; margin: 0 1px; border: 1px solid transparent;
-    color: #333; font-size: 9.5pt; }}
-#RibbonTab:checked {{ background: #ffffff; border: 1px solid #d6d6d6; border-bottom-color: #ffffff; color: {ACCENT}; }}
-#RibbonTab:hover:!checked {{ background: #e6e6e6; }}
-#RibbonTab[contextual="true"] {{ color: {ACCENT}; font-weight: 600; }}
-#RibbonTab[contextual="true"]:!checked {{ background: #e3f1ef; }}
-#RibbonPanel {{ background: #ffffff; border-top: 1px solid #d6d6d6; }}
+#TitleBar, #RibbonBar {{ background: {CHROME}; }}
+#TitleText {{ color: #222; font-size: 9.5pt; }}
+#CmdSearch {{ background: #ffffff; border: 1px solid #d4d4d4; border-radius: 5px; padding: 4px 10px 4px 28px;
+    font-size: 9.5pt; color: #222; }}
+#CmdSearch:focus {{ border: 1px solid {ACCENT}; }}
+#QAT QToolButton, #WinBtn {{ border: none; border-radius: 4px; background: transparent; }}
+#QAT QToolButton {{ padding: 4px; }}
+#QAT QToolButton:hover {{ background: #e3e3e3; }}
+#WinBtn:hover {{ background: #e3e3e3; }}
+#WinClose:hover {{ background: #c42b1c; }}
+#RibbonTab {{ background: transparent; border: none; padding: 7px 11px 8px 11px; color: #333; font-size: 9.5pt; }}
+#RibbonTab:hover {{ color: #000; }}
+#RibbonTab:checked {{ color: {ACCENT}; font-weight: 600; }}
+#RibbonTab[contextual="true"] {{ color: {ACCENT}; }}
+#RibbonCard {{ background: #ffffff; border: 1px solid #e3e3e3; border-radius: 8px; }}
+#RibbonPanel {{ background: transparent; }}
 #RibbonGroup {{ background: transparent; }}
-#RibbonGroupTitle {{ color: #666; font-size: 8pt; }}
-#RibbonSep {{ background: #e1e1e1; }}
-QToolButton[ribbon="large"] {{ border: 1px solid transparent; border-radius: 2px; padding: 2px; font-size: 8.5pt; }}
-QToolButton[ribbon="small"] {{ border: 1px solid transparent; border-radius: 2px; padding: 1px 3px; text-align: left; font-size: 8.5pt; }}
-QToolButton[ribbon]:hover {{ background: #e5f1ef; border-color: #b7d9d4; }}
-QToolButton[ribbon]:checked {{ background: #cfe6e2; border-color: #8cc4bb; }}
-QToolButton[ribbon]:pressed {{ background: #b8dbd5; }}
+#RibbonGroupTitle {{ color: #616161; font-size: 8pt; }}
+#RibbonSep {{ background: #e6e6e6; }}
+#Launcher {{ border: none; background: transparent; padding: 0; }}
+#Launcher:hover {{ background: #e8e8e8; border-radius: 3px; }}
+#Collapse {{ border: none; background: transparent; border-radius: 4px; }}
+#Collapse:hover {{ background: #eeeeee; }}
+QToolButton[ribbon="large"] {{ border: 1px solid transparent; border-radius: 4px; padding: 2px 3px; font-size: 8.5pt; }}
+QToolButton[ribbon="small"] {{ border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; text-align: left; font-size: 8.5pt; }}
+QToolButton[ribbon]:hover {{ background: #f0f0f0; border-color: #e0e0e0; }}
+QToolButton[ribbon]:checked {{ background: #e1efed; border-color: #b9dbd5; }}
+QToolButton[ribbon]:pressed {{ background: #d3e9e5; }}
 QToolButton[ribbon]::menu-indicator {{ image: none; }}
 QToolButton[ribbon]::menu-button {{ border: none; width: 12px; }}
-#FileButton {{ background: {ACCENT}; color: white; border: none; padding: 6px 18px; font-size: 9.5pt; }}
-#FileButton:hover {{ background: {ACCENT_DARK}; }}
-#QAT QToolButton {{ border: none; padding: 2px; }}
-#QAT QToolButton:hover {{ background: #e0e0e0; }}
 """
 
 
@@ -43,7 +54,7 @@ def large_button(text, icon_name=None, slot=None, menu=None, checkable=False, ti
     if icon_name:
         b.setIcon(icons.icon(icon_name, 32))
     b.setText(text + (" ▾" if menu is not None and slot is None else ""))
-    b.setMinimumWidth(52)
+    b.setMinimumWidth(50)
     b.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
     b.setCheckable(checkable)
     b.setAutoRaise(True)
@@ -76,21 +87,51 @@ def small_button(text, icon_name=None, slot=None, menu=None, checkable=False, ti
     return b
 
 
+def _launcher_icon():
+    pm = QPixmap(20, 20)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(110, 110, 110), 1.4))
+    p.drawLine(QPointF(5, 5), QPointF(5, 15))
+    p.drawLine(QPointF(5, 15), QPointF(15, 15))
+    p.drawLine(QPointF(8, 8), QPointF(14, 14))
+    p.drawLine(QPointF(14, 14), QPointF(14, 10))
+    p.drawLine(QPointF(14, 14), QPointF(10, 14))
+    p.end()
+    pm.setDevicePixelRatio(2)
+    return QIcon(pm)
+
+
 class RibbonGroup(QWidget):
-    def __init__(self, title):
+    def __init__(self, title, launcher=None, launcher_tip=None):
         super().__init__()
         self.setObjectName("RibbonGroup")
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         v = QVBoxLayout(self)
-        v.setContentsMargins(4, 2, 4, 1)
+        v.setContentsMargins(6, 4, 6, 2)
         v.setSpacing(0)
         self.body = QHBoxLayout()
         self.body.setSpacing(2)
         self.body.setContentsMargins(0, 0, 0, 0)
         v.addLayout(self.body, 1)
+        foot = QHBoxLayout()
+        foot.setContentsMargins(0, 0, 0, 0)
+        foot.addStretch()
         t = QLabel(title)
         t.setObjectName("RibbonGroupTitle")
-        t.setAlignment(Qt.AlignHCenter)
-        v.addWidget(t)
+        foot.addWidget(t)
+        foot.addStretch()
+        if launcher:
+            lb = QToolButton()
+            lb.setObjectName("Launcher")
+            lb.setIcon(_launcher_icon())
+            lb.setIconSize(QSize(10, 10))
+            lb.setFixedSize(14, 14)
+            lb.setToolTip(launcher_tip or f"{title} options")
+            lb.clicked.connect(launcher)
+            foot.addWidget(lb)
+        v.addLayout(foot)
 
     def add(self, w):
         self.body.addWidget(w)
@@ -98,12 +139,12 @@ class RibbonGroup(QWidget):
 
     def column(self, *widgets, rows=3):
         col = QVBoxLayout()
-        col.setSpacing(1)
+        col.setSpacing(2)
         col.setContentsMargins(0, 0, 0, 0)
         for w in widgets:
             if isinstance(w, (list, tuple)):
                 row = QHBoxLayout()
-                row.setSpacing(1)
+                row.setSpacing(2)
                 for x in w:
                     row.addWidget(x)
                 row.addStretch()
@@ -118,21 +159,25 @@ class RibbonPage(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("RibbonPanel")
-        self.setAttribute(Qt.WA_StyledBackground, True)
         self.h = QHBoxLayout(self)
-        self.h.setContentsMargins(4, 3, 4, 2)
+        self.h.setContentsMargins(4, 2, 30, 2)
         self.h.setSpacing(0)
         self._first = True
         self.h.addStretch()
 
-    def group(self, title):
-        g = RibbonGroup(title)
+    def group(self, title, launcher=None, launcher_tip=None):
+        g = RibbonGroup(title, launcher, launcher_tip)
         idx = self.h.count() - 1
         if not self._first:
             sep = QFrame()
             sep.setObjectName("RibbonSep")
             sep.setFixedWidth(1)
-            self.h.insertWidget(idx, sep)
+            sep.setContentsMargins(0, 8, 0, 8)
+            wrap = QWidget()
+            wl = QVBoxLayout(wrap)
+            wl.setContentsMargins(0, 6, 0, 6)
+            wl.addWidget(sep)
+            self.h.insertWidget(idx, wrap)
             idx += 1
         self._first = False
         self.h.insertWidget(idx, g)
@@ -140,12 +185,13 @@ class RibbonPage(QWidget):
 
 
 class _Tabs:
-    """Minimal tab-bar stand-in built from checkable buttons (never clips or scrolls)."""
+    """Office-style tab strip built from checkable buttons (underline marks the active tab)."""
 
-    def __init__(self, layout, on_change):
+    def __init__(self, layout, on_change, owner):
         self.layout = layout
         self.buttons = []
         self.on_change = on_change
+        self.owner = owner
         self._cur = -1
 
     def addTab(self, title):
@@ -154,8 +200,10 @@ class _Tabs:
         b.setText(title)
         b.setCheckable(True)
         b.setAutoRaise(True)
+        b.setCursor(Qt.PointingHandCursor)
         i = len(self.buttons)
         b.clicked.connect(lambda _=False, k=i: self.setCurrentIndex(k))
+        b.installEventFilter(self.owner)
         self.layout.addWidget(b)
         self.buttons.append(b)
         return i
@@ -183,6 +231,7 @@ class _Tabs:
         for k, b in enumerate(self.buttons):
             b.setChecked(k == i)
         self.on_change(i)
+        self.owner.update()
 
 
 class Ribbon(QWidget):
@@ -193,31 +242,96 @@ class Ribbon(QWidget):
         self.setObjectName("RibbonBar")
         self.setAttribute(Qt.WA_StyledBackground, True)
         v = QVBoxLayout(self)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
+        v.setContentsMargins(8, 0, 8, 6)
+        v.setSpacing(2)
         top = QWidget()
-        top.setObjectName("RibbonTabs")
         th = QHBoxLayout(top)
         th.setContentsMargins(0, 0, 0, 0)
         th.setSpacing(0)
-        self.file_btn = QPushButton("File")
-        self.file_btn.setObjectName("FileButton")
+        self.file_btn = QToolButton()
+        self.file_btn.setObjectName("RibbonTab")
+        self.file_btn.setText("File")
+        self.file_btn.setAutoRaise(True)
         self.file_btn.setCursor(Qt.PointingHandCursor)
         self.file_btn.clicked.connect(self.fileClicked)
         th.addWidget(self.file_btn)
-        th.addSpacing(4)
         tabrow = QHBoxLayout()
         tabrow.setSpacing(0)
         th.addLayout(tabrow)
         th.addStretch()
         self.right = QHBoxLayout()
+        self.right.setSpacing(4)
         th.addLayout(self.right)
         v.addWidget(top)
+        self.card = QFrame()
+        self.card.setObjectName("RibbonCard")
+        sh = QGraphicsDropShadowEffect(self.card)
+        sh.setBlurRadius(10)
+        sh.setOffset(0, 1)
+        sh.setColor(QColor(0, 0, 0, 40))
+        self.card.setGraphicsEffect(sh)
+        cl = QVBoxLayout(self.card)
+        cl.setContentsMargins(2, 2, 2, 2)
         self.stack = QStackedWidget()
-        self.stack.setFixedHeight(100)
-        v.addWidget(self.stack)
-        self.tabs = _Tabs(tabrow, self.stack.setCurrentIndex)
+        self.stack.setFixedHeight(96)
+        cl.addWidget(self.stack)
+        self.collapse_btn = QToolButton(self.card)
+        self.collapse_btn.setObjectName("Collapse")
+        self.collapse_btn.setText("⌃")
+        self.collapse_btn.setToolTip("Collapse the Ribbon (Ctrl+F1)")
+        self.collapse_btn.setFixedSize(22, 18)
+        self.collapse_btn.clicked.connect(self.toggle_collapsed)
+        v.addWidget(self.card)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.tabs = _Tabs(tabrow, self._tab_changed, self)
         self.contextual = {}
+        self.collapsed = False
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._place_collapse()
+
+    def _place_collapse(self):
+        self.collapse_btn.move(self.card.width() - self.collapse_btn.width() - 6,
+                               self.card.height() - self.collapse_btn.height() - 4)
+        self.collapse_btn.raise_()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._place_collapse()
+
+    def _tab_changed(self, i):
+        self.stack.setCurrentIndex(i)
+        if self.collapsed:
+            self.toggle_collapsed()
+
+    def toggle_collapsed(self):
+        self.collapsed = not self.collapsed
+        self.card.setVisible(not self.collapsed)
+        if not self.collapsed:
+            self._place_collapse()
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.MouseButtonDblClick and obj in self.tabs.buttons:
+            self.toggle_collapsed()
+            return True
+        return super().eventFilter(obj, ev)
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        i = self.tabs.currentIndex()
+        if 0 <= i < len(self.tabs.buttons):
+            b = self.tabs.buttons[i]
+            if b.isVisible():
+                g = b.geometry()
+                pos = b.parentWidget().mapTo(self, g.topLeft())
+                p = QPainter(self)
+                p.setRenderHint(QPainter.Antialiasing)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(ACCENT))
+                w = max(g.width() - 22, 14)
+                p.drawRoundedRect(QRectF(pos.x() + (g.width() - w) / 2, pos.y() + g.height() - 4, w, 3), 1.5, 1.5)
+                p.end()
 
     def add_page(self, title, contextual=False):
         page = RibbonPage()
@@ -235,11 +349,162 @@ class Ribbon(QWidget):
             self.tabs.setTabVisible(i, title in visible_titles)
         if cur in self.contextual.values() and not self.tabs.isTabVisible(cur):
             self.tabs.setCurrentIndex(0)
+        self.update()
 
     def select(self, title):
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == title:
                 self.tabs.setCurrentIndex(i)
+
+
+# ---------------------------------------------------------------------------
+# title bar (custom, like Office)
+# ---------------------------------------------------------------------------
+def _winbtn_icon(kind, color=QColor(40, 40, 40)):
+    pm = QPixmap(40, 40)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(color, 2))
+    p.setBrush(Qt.NoBrush)
+    if kind == "min":
+        p.drawLine(QPointF(10, 20), QPointF(30, 20))
+    elif kind == "max":
+        p.drawRoundedRect(QRectF(11, 11, 18, 18), 2, 2)
+    elif kind == "restore":
+        p.drawRoundedRect(QRectF(10, 14, 15, 15), 2, 2)
+        p.drawLine(QPointF(14, 10), QPointF(28, 10))
+        p.drawLine(QPointF(30, 12), QPointF(30, 26))
+    elif kind == "close":
+        p.drawLine(QPointF(11, 11), QPointF(29, 29))
+        p.drawLine(QPointF(29, 11), QPointF(11, 29))
+    p.end()
+    pm.setDevicePixelRatio(4)
+    return QIcon(pm)
+
+
+class TitleBar(QWidget):
+    """Logo, quick access toolbar, document name, command search and window buttons."""
+
+    def __init__(self, window, frameless, logo_path=None):
+        super().__init__()
+        self.win = window
+        self.frameless = frameless
+        self.setObjectName("TitleBar")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedHeight(40)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(10, 0, 0, 0)
+        h.setSpacing(4)
+        self.logo = QLabel()
+        if logo_path:
+            self.logo.setPixmap(QPixmap(logo_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        h.addWidget(self.logo)
+        h.addSpacing(6)
+        qat = QWidget()
+        qat.setObjectName("QAT")
+        self.qat = QHBoxLayout(qat)
+        self.qat.setContentsMargins(0, 0, 0, 0)
+        self.qat.setSpacing(2)
+        h.addWidget(qat)
+        h.addSpacing(12)
+        self.title = QLabel()
+        self.title.setObjectName("TitleText")
+        self.title.setMinimumWidth(120)
+        h.addWidget(self.title)
+        h.addStretch(1)
+        self.search = QLineEdit()
+        self.search.setObjectName("CmdSearch")
+        self.search.setPlaceholderText("Search  (Alt+Q)")
+        self.search.setFixedWidth(380)
+        self.search.setClearButtonEnabled(True)
+        si = QLabel(self.search)
+        si.setPixmap(_search_pixmap())
+        si.move(9, 7)
+        h.addWidget(self.search)
+        h.addStretch(1)
+        self.right = QHBoxLayout()
+        self.right.setSpacing(4)
+        h.addLayout(self.right)
+        h.addSpacing(8)
+        self.btn_min = self.btn_max = self.btn_close = None
+        if frameless:
+            for kind in ("min", "max", "close"):
+                b = QToolButton()
+                b.setObjectName("WinClose" if kind == "close" else "WinBtn")
+                b.setIcon(_winbtn_icon(kind))
+                b.setIconSize(QSize(10, 10))
+                b.setFixedSize(46, 40)
+                b.setAutoRaise(True)
+                b.setToolTip({"min": "Minimize", "max": "Maximize", "close": "Close"}[kind])
+                h.addWidget(b)
+                setattr(self, f"btn_{kind}", b)
+            self.btn_min.clicked.connect(window.showMinimized)
+            self.btn_max.clicked.connect(self.toggle_max)
+            self.btn_close.clicked.connect(window.close)
+            self.btn_close.installEventFilter(self)
+        else:
+            # the standard Windows title bar already shows the icon and document name
+            self.logo.hide()
+            self.title.hide()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.btn_close:
+            if ev.type() == QEvent.Enter:
+                obj.setIcon(_winbtn_icon("close", QColor(255, 255, 255)))
+            elif ev.type() == QEvent.Leave:
+                obj.setIcon(_winbtn_icon("close"))
+        return super().eventFilter(obj, ev)
+
+    def add_qat(self, icon_name, slot, tip):
+        b = QToolButton()
+        b.setIcon(icons.icon(icon_name, 16))
+        b.setIconSize(QSize(16, 16))
+        b.setToolTip(tip)
+        b.setAutoRaise(True)
+        b.clicked.connect(slot)
+        self.qat.addWidget(b)
+        return b
+
+    def set_title(self, text):
+        self.title.setText(text)
+
+    def toggle_max(self):
+        if self.win.isMaximized():
+            self.win.showNormal()
+        else:
+            self.win.showMaximized()
+
+    def sync_max_icon(self):
+        if self.btn_max is not None:
+            self.btn_max.setIcon(_winbtn_icon("restore" if self.win.isMaximized() else "max"))
+
+    def mousePressEvent(self, ev):
+        if self.frameless and ev.button() == Qt.LeftButton:
+            wh = self.win.windowHandle()
+            if wh is not None and wh.startSystemMove():
+                ev.accept()
+                return
+        super().mousePressEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev):
+        if self.frameless and ev.button() == Qt.LeftButton:
+            self.toggle_max()
+            return
+        super().mouseDoubleClickEvent(ev)
+
+
+def _search_pixmap():
+    pm = QPixmap(28, 28)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(90, 90, 90), 2.2))
+    p.drawEllipse(QRectF(4, 4, 14, 14))
+    p.drawLine(QPointF(16, 16), QPointF(24, 24))
+    p.end()
+    pm.setDevicePixelRatio(2)
+    return pm
 
 
 # ---------------------------------------------------------------------------

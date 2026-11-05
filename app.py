@@ -25,8 +25,8 @@ from canvas import (PageScene, ShapeItem, page_image, render_page, item_to_png, 
 import docio
 import templates
 import icons
-from ribbon import (Ribbon, ColorMenu, ShapeMenu, Ruler, large_button, small_button, RIBBON_QSS, ACCENT,
-                    ACCENT_DARK)
+from ribbon import (Ribbon, ColorMenu, ShapeMenu, Ruler, TitleBar, large_button, small_button, RIBBON_QSS,
+                    ACCENT, ACCENT_DARK, CHROME)
 from pubwriter import write_pub
 from pubreader import read_pub, is_own_file
 from pub_import import import_pub, ImportError_, find_soffice
@@ -343,6 +343,10 @@ class Backstage(QWidget):
         self.auto_chk.setChecked(self.editor.settings.value("auto_update", True, type=bool))
         self.auto_chk.toggled.connect(lambda on: self.editor.settings.setValue("auto_update", on))
         v.addWidget(self.auto_chk)
+        self.classic_chk = QCheckBox("Use the standard Windows title bar (takes effect next time PubDesign starts)")
+        self.classic_chk.setChecked(self.editor.settings.value("classic_titlebar", False, type=bool))
+        self.classic_chk.toggled.connect(lambda on: self.editor.settings.setValue("classic_titlebar", on))
+        v.addWidget(self.classic_chk)
         v.addStretch()
         return w
 
@@ -601,6 +605,75 @@ class FormatDialog(QDialog):
         return g
 
 
+def _thumb_icon(img):
+    """Page thumbnail icon that keeps its true colours when selected (no blue tint)."""
+    pm = QPixmap.fromImage(img)
+    ic = QIcon()
+    for mode in (QIcon.Normal, QIcon.Selected, QIcon.Active):
+        ic.addPixmap(pm, mode)
+    return ic
+
+
+# ---------------------------------------------------------------------------
+# window frame (resize edges for the custom title bar)
+# ---------------------------------------------------------------------------
+class WindowFrame(QWidget):
+    """Thin border around the window that resizes it, used with the custom title bar."""
+    GRIP = 5
+
+    def __init__(self, win, frameless):
+        super().__init__()
+        self.win = win
+        self.frameless = frameless
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("WindowFrame")
+        self.lay = QVBoxLayout(self)
+        self.lay.setSpacing(0)
+        self.sync()
+
+    def sync(self):
+        m = self.GRIP if (self.frameless and not self.win.isMaximized() and not self.win.isFullScreen()) else 0
+        self.lay.setContentsMargins(m, m, m, m)
+        self.setStyleSheet(f"#WindowFrame {{ background: {CHROME}; border: {1 if m else 0}px solid #b9b9b9; }}")
+
+    def _edges(self, pos):
+        if not self.frameless or self.win.isMaximized():
+            return Qt.Edges()
+        g = self.GRIP + 2
+        e = Qt.Edges()
+        if pos.x() <= g:
+            e |= Qt.LeftEdge
+        if pos.x() >= self.width() - g:
+            e |= Qt.RightEdge
+        if pos.y() <= g:
+            e |= Qt.TopEdge
+        if pos.y() >= self.height() - g:
+            e |= Qt.BottomEdge
+        return e
+
+    def mouseMoveEvent(self, ev):
+        e = self._edges(ev.position().toPoint())
+        if e in (Qt.LeftEdge | Qt.TopEdge, Qt.RightEdge | Qt.BottomEdge):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif e in (Qt.RightEdge | Qt.TopEdge, Qt.LeftEdge | Qt.BottomEdge):
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif e & (Qt.LeftEdge | Qt.RightEdge):
+            self.setCursor(Qt.SizeHorCursor)
+        elif e & (Qt.TopEdge | Qt.BottomEdge):
+            self.setCursor(Qt.SizeVerCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(ev)
+
+    def mousePressEvent(self, ev):
+        e = self._edges(ev.position().toPoint())
+        if e and ev.button() == Qt.LeftButton and self.win.windowHandle() is not None:
+            self.win.windowHandle().startSystemResize(e)
+            return
+        super().mousePressEvent(ev)
+
+
 # ---------------------------------------------------------------------------
 # main window
 # ---------------------------------------------------------------------------
@@ -626,8 +699,15 @@ class MainWindow(QMainWindow):
         self.scene = None
         self.painter_fmt = None
 
+        self.frameless = not self.settings.value("classic_titlebar", False, type=bool)
+        if self.frameless:
+            self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.frame = WindowFrame(self, self.frameless)
+        self.setCentralWidget(self.frame)
+        self.titlebar = TitleBar(self, self.frameless, asset("logo.png") if os.path.exists(asset("logo.png")) else None)
+        self.frame.lay.addWidget(self.titlebar)
         self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
+        self.frame.lay.addWidget(self.stack, 1)
         editor = QWidget()
         ev = QVBoxLayout(editor)
         ev.setContentsMargins(0, 0, 0, 0)
@@ -665,6 +745,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.backstage)
         self._build_shortcuts()
         self._build_ribbon()
+        self._build_command_search()
         self.setStyleSheet(RIBBON_QSS)
         self.resize(1400, 900)
         self.load_document(self.doc, None)
@@ -828,16 +909,35 @@ class MainWindow(QMainWindow):
         S("Ctrl+Shift+N", self.add_page)
         S("Ctrl+Shift+C", self.start_painter)
         S("F9", self.zoom_100)
+        S("Alt+Q", lambda: (self.titlebar.search.setFocus(), self.titlebar.search.selectAll()))
+        S("Ctrl+F1", lambda: self.ribbon.toggle_collapsed())
         S("Ctrl+Shift+L", self.whole_page)
         S("Ctrl+=", lambda: self.set_zoom(self.view.transform().m11() * 1.25))
         S("Ctrl+-", lambda: self.set_zoom(self.view.transform().m11() / 1.25))
 
     def _build_ribbon(self):
         R = self.ribbon
-        for name, slot, tip in [("save", self.save, "Save (Ctrl+S)"), ("undo", self.undo, "Undo (Ctrl+Z)"),
-                                ("redo", self.redo, "Redo (Ctrl+Y)")]:
-            R.right.addWidget(small_button("", name, slot, tip=tip, text_visible=False))
-        R.right.addSpacing(8)
+        T = self.titlebar
+        T.add_qat("save", self.save, "Save (Ctrl+S)")
+        T.add_qat("undo", self.undo, "Undo (Ctrl+Z)")
+        T.add_qat("redo", self.redo, "Redo (Ctrl+Y)")
+        share = QToolButton()
+        share.setObjectName("ShareBtn")
+        share.setText("  Export  ")
+        share.setIcon(icons.icon("export", 16))
+        share.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        share.setPopupMode(QToolButton.InstantPopup)
+        share.setStyleSheet(f"#ShareBtn {{ background:{ACCENT}; color:white; border:none; border-radius:5px; "
+                            f"padding:4px 10px; font-size:9pt; }} #ShareBtn:hover {{ background:{ACCENT_DARK}; }}"
+                            "#ShareBtn::menu-indicator { image:none; }")
+        sm_ = QMenu(self)
+        sm_.addAction(icons.icon("pdf", 16), "Create PDF", self.export_pdf)
+        sm_.addAction(icons.icon("image", 16), "Save as Picture", self.export_image)
+        sm_.addAction(icons.icon("print", 16), "Print", lambda: self.open_backstage("print"))
+        sm_.addSeparator()
+        sm_.addAction(icons.icon("save", 16), "Save a backup copy (.pubdesign)", lambda: self.save_as("pubdesign"))
+        share.setMenu(sm_)
+        R.right.addWidget(share)
 
         # ---------------- Home ----------------
         home = R.add_page("Home")
@@ -902,7 +1002,7 @@ class MainWindow(QMainWindow):
         g.add(large_button("Pictures", "picture", self.insert_picture, tip="Insert a picture from your computer"))
         g.add(large_button("Shapes", "shapes", None, menu=self._shape_menu(self.pick_shape_tool)))
 
-        g = home.group("Arrange")
+        g = home.group("Arrange", self.format_object_dialog, "Format Object (size, position, rotation)")
         g.column(self._forward_btn(), self._backward_btn(), self._align_btn())
         g.column(self._rotate_btn(), small_button("Select All", "selectall", self.select_all))
 
@@ -923,7 +1023,7 @@ class MainWindow(QMainWindow):
 
         # ---------------- Page Design ----------------
         pd = R.add_page("Page Design")
-        g = pd.group("Page Setup")
+        g = pd.group("Page Setup", self.page_setup_dialog, "Page Setup")
         mm = QMenu(self)
         for label, inch in [("None", 0), ("Narrow (0.25\")", 0.25), ("Moderate (0.5\")", 0.5), ("Wide (1\")", 1.0)]:
             mm.addAction(label, lambda _=False, v=inch: self.set_margins(v * 72))
@@ -984,7 +1084,7 @@ class MainWindow(QMainWindow):
         g.add(large_button("Change\nShape", "shapes", None, menu=self._shape_menu(self.change_shape, lines=False)))
         g = sf.group("Shape Styles")
         g.column(self._fill_btn(), self._outline_btn(), self._weight_btn())
-        g = sf.group("Arrange")
+        g = sf.group("Arrange", self.format_object_dialog, "Format Object (size, position, rotation)")
         g.column(self._forward_btn(), self._backward_btn(), self._align_btn())
         g.column(self._rotate_btn())
         g = sf.group("Size")
@@ -1000,7 +1100,7 @@ class MainWindow(QMainWindow):
             b = large_button(label, ic, lambda _=False, k=key: self.apply_shape(valign=k), checkable=True)
             self.valign_btns[key] = b
             g.add(b)
-        g = tf.group("Arrange")
+        g = tf.group("Arrange", self.format_object_dialog, "Format Object (size, position, rotation)")
         g.column(self._forward_btn(), self._backward_btn(), self._align_btn())
         g.column(self._rotate_btn())
         g = tf.group("Size")
@@ -1013,7 +1113,7 @@ class MainWindow(QMainWindow):
         g.add(large_button("Reset\nSize", "reset", self.reset_picture_size))
         g = pf.group("Picture Styles")
         g.column(self._outline_btn("Picture Border"), self._weight_btn())
-        g = pf.group("Arrange")
+        g = pf.group("Arrange", self.format_object_dialog, "Format Object (size, position, rotation)")
         g.column(self._forward_btn(), self._backward_btn(), self._align_btn())
         g.column(self._rotate_btn())
         g = pf.group("Size")
@@ -1232,6 +1332,69 @@ class MainWindow(QMainWindow):
     def update_title(self):
         name = os.path.basename(self.path) if self.path else "Publication1"
         self.setWindowTitle(f"{'*' if self.dirty else ''}{name} - {APP}")
+        self.titlebar.set_title(f"{'*' if self.dirty else ''}{name}  -  {APP}")
+
+    def changeEvent(self, ev):
+        if ev.type() == ev.Type.WindowStateChange:
+            self.frame.sync()
+            self.titlebar.sync_max_icon()
+        super().changeEvent(ev)
+
+    # ================= command search (title bar) =================
+    def _build_command_search(self):
+        cmds = {}
+        R = self.ribbon
+        for ti in range(R.stack.count()):
+            page = R.stack.widget(ti)
+            for b in page.findChildren(QToolButton):
+                if not b.property("ribbon"):
+                    continue
+                name = (b.text() or "").replace("▾", "").replace("\n", " ").strip()
+                if len(name) <= 4 or name in ("Top", "Middle", "Bottom", "Page", "Size", "Center"):
+                    name = (b.toolTip() or name).replace("\n", " ").strip()
+                name = name.split(" (")[0].strip()
+                if name and name not in cmds:
+                    cmds[name] = ("button", ti, b)
+        for name, fn in [("Save", self.save), ("Save As", lambda: self.save_as("pub")), ("Open", self.open_doc),
+                         ("New", lambda: self.open_backstage("new")), ("Print", lambda: self.open_backstage("print")),
+                         ("Create PDF", self.export_pdf), ("Save as Picture", self.export_image),
+                         ("Page Setup", self.page_setup_dialog), ("Check for Updates", self.check_for_updates),
+                         ("Insert Page", self.add_page), ("Delete Page", self.delete_page),
+                         ("Undo", self.undo), ("Redo", self.redo), ("Bold", lambda: self.toggle_char("bold")),
+                         ("Italic", lambda: self.toggle_char("italic")), ("Underline", lambda: self.toggle_char("underline")),
+                         ("Collapse the Ribbon", self.ribbon.toggle_collapsed), ("About PubDesign", self.about)]:
+            cmds.setdefault(name, ("call", fn))
+        self._commands = cmds
+        from PySide6.QtWidgets import QCompleter
+        comp = QCompleter(sorted(cmds), self)
+        comp.setCaseSensitivity(Qt.CaseInsensitive)
+        comp.setFilterMode(Qt.MatchContains)
+        comp.setMaxVisibleItems(12)
+        self.titlebar.search.setCompleter(comp)
+        comp.activated.connect(self._run_command)
+        self.titlebar.search.returnPressed.connect(lambda: self._run_command(self.titlebar.search.text()))
+
+    def _run_command(self, name):
+        key = next((k for k in self._commands if k.lower() == name.strip().lower()), None)
+        if key is None:
+            matches = [k for k in self._commands if name.strip().lower() in k.lower()]
+            key = matches[0] if matches else None
+        QTimer.singleShot(0, self.titlebar.search.clear)
+        if key is None:
+            self.statusBar().showMessage(f"No command named '{name}'.", 4000)
+            return
+        cmd = self._commands[key]
+        self.view.setFocus()
+        if cmd[0] == "call":
+            cmd[1]()
+            return
+        _, ti, b = cmd
+        if self.ribbon.tabs.isTabVisible(ti):
+            self.ribbon.tabs.setCurrentIndex(ti)
+        if b.menu() is not None and b.popupMode() == QToolButton.InstantPopup:
+            QTimer.singleShot(0, b.showMenu)
+        else:
+            QTimer.singleShot(0, b.click)
 
     # ================= pages =================
     def refresh_pages(self):
@@ -1239,7 +1402,7 @@ class MainWindow(QMainWindow):
         self.pages_list.clear()
         for i, p in enumerate(self.doc.pages):
             img = page_image(p, self.doc, 110)
-            li = QListWidgetItem(QIcon(QPixmap.fromImage(img)), str(i + 1))
+            li = QListWidgetItem(_thumb_icon(img), str(i + 1))
             li.setTextAlignment(Qt.AlignHCenter)
             self.pages_list.addItem(li)
         self.pages_list.setCurrentRow(self.page_index)
@@ -1251,7 +1414,7 @@ class MainWindow(QMainWindow):
             self.refresh_pages()
             return
         img = page_image(self.doc.pages[self.page_index], self.doc, 110)
-        self.pages_list.item(self.page_index).setIcon(QIcon(QPixmap.fromImage(img)))
+        self.pages_list.item(self.page_index).setIcon(_thumb_icon(img))
 
     def _page_clicked(self, row):
         if row < 0 or row == self.page_index:

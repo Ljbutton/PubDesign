@@ -1,4 +1,4 @@
 {
-  "version": "2.1.0",
-  "notes": "Renamed to PubDesign, new logo, one-click installer and automatic updates."
+  "version": "2.2.0",
+  "notes": "New Office-style title bar with Save, Undo and Redo up top, command search (Alt+Q), cleaner ribbon and an Export button."
 }

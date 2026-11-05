@@ -24,8 +24,10 @@ installs the new version and reopens on its own. You can also check by hand unde
 
 ## Features
 
+- Office-style title bar with Save, Undo and Redo, plus a **Search** box (Alt+Q) that finds any command
 - Publisher-style ribbon: **File**, **Home**, **Insert**, **Page Design** and **View**, plus
   **Shape Format**, **Text Box** and **Picture Format** tabs when something is selected
+- Collapsible ribbon (Ctrl+F1) and an **Export** button for PDF, pictures and printing
 - Page thumbnails, rulers, margin guides, zoom slider and Publisher's keyboard shortcuts
 - Text boxes with fonts, sizes, bold/italic/underline, colors, alignment and bullets
 - Publisher AutoShapes (stars, arrows, heart and more), lines and pictures
