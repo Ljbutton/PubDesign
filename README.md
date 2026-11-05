@@ -28,6 +28,7 @@ You can also check by hand under **File ▸ Info ▸ Check for Updates**.
 - Office-style title bar with Save, Undo and Redo, plus a **Search** box (Alt+Q) that finds any command
 - Publisher-style ribbon: **File**, **Home**, **Insert**, **Page Design** and **View**, plus
   **Shape Format**, **Text Box** and **Picture Format** tabs when something is selected
+- Fonts a publication uses but your PC lacks are fetched free from Google Fonts (when they are Google Fonts)
 - Smooth Office-style animations (File menu, ribbon tabs, zoom, menus); can be turned off in File ▸ Options
 - Collapsible ribbon (Ctrl+F1) and an **Export** button for PDF, pictures and printing
 - Page thumbnails, rulers, margin guides, zoom slider and Publisher's keyboard shortcuts

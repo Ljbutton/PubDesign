@@ -132,6 +132,9 @@ class TextChild(QGraphicsTextItem):
         self.document().setDocumentMargin(0)
         opt = self.document().defaultTextOption()
         opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        # lay text out with the font's true (unhinted) widths so lines wrap the same at every zoom and
+        # on every screen; otherwise Windows' rounded widths can push the last letters past the box edge
+        opt.setUseDesignMetrics(True)
         self.document().setDefaultTextOption(opt)
         self.setTextInteractionFlags(Qt.NoTextInteraction)
         self.document().contentsChanged.connect(shape.relayout_text)

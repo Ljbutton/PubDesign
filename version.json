@@ -1,4 +1,4 @@
 {
-  "version": "2.4.0",
-  "notes": "Smooth Office-style animations: sliding File menu and ribbon tabs, gliding zoom, fading menus. Turn them off under File > Options."
+  "version": "2.4.1",
+  "notes": "Start screen without a blank publication behind it, missing fonts fetched free from Google Fonts, and text no longer clipped at the edge of text boxes."
 }

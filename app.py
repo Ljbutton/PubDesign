@@ -33,6 +33,7 @@ from pubreader import read_pub, is_own_file
 from pub_import import import_pub, ImportError_, find_soffice, find_pubconv, can_import
 import updater
 import anim
+import fonts
 
 APP = "PubDesign"
 VERSION = updater.local_version()
@@ -338,6 +339,8 @@ class Backstage(QWidget):
         back.setCursor(Qt.PointingHandCursor)
         back.clicked.connect(editor.close_backstage)
         nv.addWidget(back)
+        self.back_btn = back
+        self.doc_only = []   # nav entries that need an open publication
         nv.addSpacing(14)
         self.body = QStackedWidget()
         self.body.setObjectName("BackBody")
@@ -347,6 +350,7 @@ class Backstage(QWidget):
             f = QFrame()
             f.setObjectName("NavSep")
             nv.addWidget(f)
+            return f
 
         def item(key, label, icon_name):
             b = QToolButton()
@@ -363,11 +367,12 @@ class Backstage(QWidget):
 
         for key, label, ic in [("home", "Home", "bs_home"), ("new", "New", "bs_new"), ("open", "Open", "bs_open")]:
             item(key, label, ic)
-        sep()
+        self.doc_only.append(sep())
         for key, label, ic in [("info", "Info", "bs_info"), ("save", "Save", "bs_save"),
                                ("saveas", "Save As", "bs_saveas"), ("print", "Print", "bs_print"),
                                ("export", "Export", "bs_export"), ("close", "Close", "bs_close")]:
             item(key, label, ic)
+            self.doc_only.append(self.buttons[key])
         nv.addStretch()
         sep()
         item("options", "Options", "bs_options")
@@ -440,6 +445,10 @@ class Backstage(QWidget):
             anim.enable_menu_effects()
         self.anim_chk.toggled.connect(anim_toggled)
         v.addWidget(self.anim_chk)
+        self.gfonts_chk = QCheckBox("When a publication uses a font this PC doesn't have, get it free from Google Fonts")
+        self.gfonts_chk.setChecked(self.editor.settings.value("google_fonts", True, type=bool))
+        self.gfonts_chk.toggled.connect(lambda on: self.editor.settings.setValue("google_fonts", on))
+        v.addWidget(self.gfonts_chk)
         self.classic_chk = QCheckBox("Use the standard Windows title bar (takes effect next time PubDesign starts)")
         self.classic_chk.setChecked(self.editor.settings.value("classic_titlebar", False, type=bool))
         self.classic_chk.toggled.connect(lambda on: self.editor.settings.setValue("classic_titlebar", on))
@@ -1163,6 +1172,12 @@ class Backstage(QWidget):
         v.addStretch()
         return w
 
+    def set_start_mode(self, on):
+        """Start screen (no publication open): no back arrow and no document commands, like Office."""
+        self.back_btn.setVisible(not on)
+        for wdg in self.doc_only:
+            wdg.setVisible(not on)
+
     def show_page(self, key, animate=True):
         ed = self.editor
         if key == "save":
@@ -1450,6 +1465,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(RIBBON_QSS)
         self.resize(1400, 900)
         self.load_document(self.doc, None)
+        self.font_fetcher = fonts.FontFetcher()
+        self.font_fetcher.ready.connect(self._fonts_ready)
+        self.font_fetcher.status.connect(lambda m: self.statusBar().showMessage(m, 8000))
         self.checker = updater.UpdateChecker()
         self.checker.available.connect(self._update_available)
         self.checker.upToDate.connect(self._up_to_date)
@@ -1644,9 +1662,9 @@ class MainWindow(QMainWindow):
     def _build_ribbon(self):
         R = self.ribbon
         T = self.titlebar
-        T.add_qat("save", self.save, "Save (Ctrl+S)")
-        T.add_qat("undo", self.undo, "Undo (Ctrl+Z)")
-        T.add_qat("redo", self.redo, "Redo (Ctrl+Y)")
+        self.qat_buttons = [T.add_qat("save", self.save, "Save (Ctrl+S)"),
+                            T.add_qat("undo", self.undo, "Undo (Ctrl+Z)"),
+                            T.add_qat("redo", self.redo, "Redo (Ctrl+Y)")]
         share = QToolButton()
         share.setObjectName("ShareBtn")
         share.setText("  Export  ")
@@ -1936,7 +1954,28 @@ class MainWindow(QMainWindow):
             sb.addPermanentWidget(w)
 
     # ================= document lifecycle =================
+    def show_start(self):
+        """Office-style start screen: File menu Home page with no publication behind it."""
+        self.load_document(templates.blank(612, 792), None)
+        self.dirty = False
+        self.has_doc = False
+        self.statusBar().hide()
+        for b in getattr(self, "qat_buttons", []):
+            b.setEnabled(False)
+        self.backstage.set_start_mode(True)
+        self.update_title()
+        if self.stack.currentIndex() == 1:
+            self.backstage.show_page("home")
+        else:
+            self.open_backstage("home")
+
     def load_document(self, doc, path, fresh_history=True):
+        self.has_doc = True
+        self.statusBar().show()
+        for b in getattr(self, "qat_buttons", []):
+            b.setEnabled(True)
+        if hasattr(self, "backstage"):
+            self.backstage.set_start_mode(False)
         self.doc = doc
         for attr, default in (("unit", "in"), ("margin", 36)):
             if not hasattr(self.doc, attr):
@@ -1955,16 +1994,41 @@ class MainWindow(QMainWindow):
         if path:
             self.add_recent(path)
         QTimer.singleShot(0, self.whole_page)
+        if hasattr(self, "font_fetcher") and self.settings.value("google_fonts", True, type=bool):
+            fams = {r.font for pg in doc.pages for it in pg.items for para in (getattr(it, "paras", None) or [])
+                    for r in para.runs if getattr(r, "font", None)}
+            self.font_fetcher.fetch_missing(sorted(fams))
+
+    def _fonts_ready(self, found):
+        """Fonts arrived from Google Fonts: load them and re-flow the text so it fits like the original."""
+        if not found:
+            self.statusBar().clearMessage()
+            return
+        from PySide6.QtGui import QFontDatabase
+        for paths in found.values():
+            for p in paths:
+                QFontDatabase.addApplicationFont(p)
+        if self.scene is not None:
+            for s in self.scene.shapes():
+                if s.text is not None:
+                    d = s.text.document()
+                    d.setDefaultFont(d.defaultFont())
+                    d.markContentsDirty(0, d.characterCount())
+                    s.relayout_text()
+                    s.update()
+        self.refresh_pages()
+        self.statusBar().showMessage("Added the free font" + ("s " if len(found) > 1 else " ") +
+                                     ", ".join(found) + " from Google Fonts.", 8000)
 
     def new_from(self, doc):
         if not self.maybe_save():
             return
-        self.close_backstage()
         self.load_document(doc, None)
+        self.close_backstage()
 
     def close_document(self):
         if self.maybe_save():
-            self.load_document(templates.blank(612, 792), None)
+            self.show_start()
 
     def show_page(self, idx):
         idx = max(0, min(idx, len(self.doc.pages) - 1))
@@ -2058,6 +2122,10 @@ class MainWindow(QMainWindow):
         self.update_title()
 
     def update_title(self):
+        if not getattr(self, "has_doc", True):
+            self.setWindowTitle(APP)
+            self.titlebar.set_title(APP)
+            return
         name = os.path.basename(self.path) if self.path else "Publication1"
         self.setWindowTitle(f"{'*' if self.dirty else ''}{name} - {APP}")
         self.titlebar.set_title(f"{'*' if self.dirty else ''}{name}  -  {APP}")
@@ -2981,7 +3049,7 @@ class MainWindow(QMainWindow):
         anim.transition(self.stack, change, dx=-90, duration=anim.NORMAL)
 
     def close_backstage(self):
-        if self.stack.currentIndex() == 0:
+        if self.stack.currentIndex() == 0 or not getattr(self, "has_doc", True):
             return
         anim.transition(self.stack, lambda: self.stack.setCurrentIndex(0), dx=60, duration=anim.FAST)
 
@@ -3081,14 +3149,14 @@ class MainWindow(QMainWindow):
                 msg = "Opening…" if is_own_file(path) else \
                     "Opening a Microsoft Publisher file…"
                 doc, note = self._run_busy(lambda: self._read_pub(path, mode), msg)
-                self.close_backstage()
                 self.load_document(doc, path if mode != "pictures" else None)
+                self.close_backstage()
                 if note:
                     self.statusBar().showMessage(note, 15000)
             else:
                 doc = docio.load_backup(path)
-                self.close_backstage()
                 self.load_document(doc, path)
+                self.close_backstage()
         except ImportError_ as e:
             self._lo_missing(str(e))
         except Exception as e:
@@ -3375,6 +3443,8 @@ def selftest():
         w.dirty = False
         tool = PI.find_pubconv()
         report.append(f"pubconv: {tool}")
+        from fontTools.varLib import instancer  # noqa: F401  (font fetching is bundled)
+        report.append(f"fonts: split {fonts.split_family('Rubik Medium')}")
         if getattr(sys, "frozen", False) and os.name == "nt":
             ok &= tool is not None
             # Publisher-made file through the bundled reader
@@ -3475,6 +3545,10 @@ def main():
     updater.mark_running()
     app = QApplication(sys.argv)
     app.setApplicationName(APP)
+    try:
+        fonts.load_cached()
+    except Exception:
+        pass
     app.setStyle("Fusion")
     f = app.font()
     f.setFamily("Segoe UI")
@@ -3486,10 +3560,9 @@ def main():
     anim.fade_in_window(win)
     win.show()
     args = [x for x in sys.argv[1:] if not x.startswith("-")]
+    win.show_start()
     if args and os.path.exists(args[0]):
         win.open_path(args[0], checked=True)
-    else:
-        win.open_backstage("home")
     sys.exit(app.exec())
 
 
