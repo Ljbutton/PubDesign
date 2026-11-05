@@ -417,8 +417,113 @@ class Backstage(QWidget):
         v.addSpacing(10)
         v.addWidget(self._big("size", "Page Setup", "Change the page size, orientation and margin guides.",
                               lambda: (self.editor.close_backstage(), self.editor.page_setup_dialog())))
+        v.addSpacing(22)
+        head = QLabel("Fonts in this publication")
+        head.setObjectName("SectionHead")
+        v.addWidget(head)
+        self.fonts_box = QWidget()
+        self.fonts_box.setMaximumWidth(860)
+        self.fonts_lay = QVBoxLayout(self.fonts_box)
+        self.fonts_lay.setContentsMargins(0, 4, 0, 0)
+        self.fonts_lay.setSpacing(0)
+        v.addWidget(self.fonts_box)
         v.addStretch()
-        return w
+        outer = QScrollArea()
+        outer.setWidgetResizable(True)
+        outer.setFrameShape(QFrame.NoFrame)
+        outer.setWidget(w)
+        outer.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: #fafafa; }")
+        return outer
+
+    def _doc_fonts(self):
+        ed = self.editor
+        if ed.scene is not None:
+            try:
+                ed.sync_from_scene()
+            except Exception:
+                pass
+        fams = set()
+        for pg in ed.doc.pages:
+            for it in pg.items:
+                for para in (getattr(it, "paras", None) or []):
+                    for r in para.runs:
+                        if getattr(r, "font", None) and r.text.strip():
+                            fams.add(r.font)
+        return sorted(fams, key=str.lower)
+
+    def refresh_fonts(self):
+        while self.fonts_lay.count():
+            it = self.fonts_lay.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        fams = self._doc_fonts()
+        if not fams:
+            lab = QLabel("This publication doesn't have any text yet.")
+            lab.setStyleSheet("color:#555; font-size:10pt; padding:6px 0")
+            self.fonts_lay.addWidget(lab)
+            return
+        system = fonts.system_families()
+        for fam in fams:
+            st = fonts.status(fam, system)
+            row = QFrame()
+            row.setStyleSheet("QFrame { border-bottom: 1px solid #e3e3e3; background: transparent; }"
+                              "QLabel { border: none; }")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(4, 8, 4, 8)
+            h.setSpacing(12)
+            name = QLabel(fam)
+            f = QFont(fam)
+            f.setPointSizeF(12)
+            name.setFont(f)
+            name.setMinimumWidth(220)
+            h.addWidget(name)
+            if st == fonts.INSTALLED:
+                txt, col = "Installed on this PC", "#2b7a3d"
+            elif st == fonts.PUBDESIGN:
+                txt, col = "Added by PubDesign from Google Fonts (PubDesign only)", ACCENT
+            elif not fonts.was_tried(fam) and self.editor.settings.value("google_fonts", True, type=bool):
+                txt, col = "Checking Google Fonts…", "#666"
+            else:
+                txt, col = f"Missing — shown in {fonts.stand_in(fam)} instead", "#b3261e"
+            stl = QLabel(txt)
+            stl.setStyleSheet(f"color:{col}; font-size:9.5pt")
+            stl.setWordWrap(True)
+            h.addWidget(stl, 1)
+            if st == fonts.PUBDESIGN:
+                b = QPushButton("Install for all apps")
+                b.setToolTip("Add this free font to Windows for your account so Word and other programs can use it")
+                b.clicked.connect(lambda _=False, fm=fam: self._install_font(fm))
+                h.addWidget(b)
+            elif st == fonts.MISSING and (fonts.was_tried(fam) or
+                                          not self.editor.settings.value("google_fonts", True, type=bool)):
+                b = QPushButton("Try again")
+                b.setToolTip("Look for this font on Google Fonts again")
+                b.clicked.connect(lambda _=False, fm=fam: (self.editor.font_fetcher.fetch_missing([fm], force=True),
+                                                           QTimer.singleShot(50, self.refresh_fonts)))
+                h.addWidget(b)
+                hint = QLabel("Not a free Google Font? Install it on this PC (double-click the font file, then "
+                              "Install) and reopen the publication.")
+                hint.setWordWrap(True)
+                hint.setStyleSheet("color:#666; font-size:8.5pt")
+                row2 = QWidget()
+                rv = QVBoxLayout(row2)
+                rv.setContentsMargins(0, 0, 0, 0)
+                rv.setSpacing(2)
+                rv.addWidget(row)
+                rv.addWidget(hint)
+                self.fonts_lay.addWidget(row2)
+                continue
+            self.fonts_lay.addWidget(row)
+        if any(fonts.status(fm, system) == fonts.PUBDESIGN for fm in fams):
+            note = QLabel(f"PubDesign keeps its copies in {fonts.font_dir()}")
+            note.setStyleSheet("color:#666; font-size:8.5pt; padding-top:6px")
+            note.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.fonts_lay.addWidget(note)
+
+    def _install_font(self, fam):
+        ok, msg = fonts.install_for_windows(fam)
+        (QMessageBox.information if ok else QMessageBox.warning)(self, APP, msg)
+        self.refresh_fonts()
 
     # ---------------- Options ----------------
     def _options_page(self):
@@ -756,6 +861,7 @@ class Backstage(QWidget):
             f"Page size: {round(ed.doc.width / uf, 2):g} × {round(ed.doc.height / uf, 2):g} {ed.doc.unit}<br><br>"
             f"Publications are saved in Microsoft Publisher format (.pub).<br>"
             f"Reader for files made in Microsoft Publisher: <span style=color:#077568>{reader}</span>")
+        self.refresh_fonts()
 
     def _new_page(self):
         w, v = self._page("New")
@@ -1999,8 +2105,12 @@ class MainWindow(QMainWindow):
                     for r in para.runs if getattr(r, "font", None)}
             self.font_fetcher.fetch_missing(sorted(fams))
 
-    def _fonts_ready(self, found):
+    def _fonts_ready(self, result):
         """Fonts arrived from Google Fonts: load them and re-flow the text so it fits like the original."""
+        found = result.get("found", {})
+        bs = self.backstage
+        if self.stack.currentIndex() == 1 and bs.body.currentWidget() is bs.pages.get("info"):
+            QTimer.singleShot(0, bs.refresh_info)
         if not found:
             self.statusBar().clearMessage()
             return
@@ -3546,6 +3656,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP)
     try:
+        fonts.snapshot_system_fonts()
         fonts.load_cached()
     except Exception:
         pass

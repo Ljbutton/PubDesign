@@ -196,18 +196,126 @@ def installed_families():
     return {f.lower() for f in QFontDatabase.families()}
 
 
+# ---------------------------------------------------------------------------
+# what a publication's fonts are doing on this PC
+# ---------------------------------------------------------------------------
+INSTALLED = "installed"     # on this PC for every app
+PUBDESIGN = "pubdesign"     # fetched by PubDesign, only PubDesign uses it
+MISSING = "missing"         # not available; a stand-in font is drawn
+
+
+def fetched_families():
+    idx = _load_index()
+    return {fam: [p for p in paths if os.path.exists(p)] for fam, paths in idx.items()}
+
+
+def status(family, system_families):
+    """INSTALLED / PUBDESIGN / MISSING for one font name. system_families: lower-case names from the
+    font list taken before PubDesign added its own fonts (see snapshot_system_fonts)."""
+    low = family.lower()
+    fetched = fetched_families()
+    if family in fetched and fetched[family]:
+        return INSTALLED if is_installed_for_windows(family) else PUBDESIGN
+    if low in system_families:
+        return INSTALLED
+    return MISSING
+
+
+_system = None
+
+
+def snapshot_system_fonts():
+    """Remember which fonts the PC itself has (call before load_cached adds PubDesign's)."""
+    global _system
+    _system = installed_families()
+    return _system
+
+
+def system_families():
+    return _system if _system is not None else installed_families()
+
+
+def stand_in(family):
+    """The font Windows actually draws when `family` is missing."""
+    from PySide6.QtGui import QFont, QFontInfo
+    return QFontInfo(QFont(family)).family()
+
+
+def was_tried(family):
+    return family in _tried
+
+
+# ---- install for all apps (Windows, current user, no admin needed) ----
+_REG = r"Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+
+
+def _user_font_dir():
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "Microsoft", "Windows", "Fonts")
+
+
+def _reg_name(path):
+    from fontTools.ttLib import TTFont
+    t = TTFont(path, lazy=True)
+    fam = t["name"].getDebugName(1) or os.path.basename(path)
+    sub = t["name"].getDebugName(2) or "Regular"
+    t.close()
+    return (fam if sub == "Regular" else f"{fam} {sub}") + " (TrueType)"
+
+
+def is_installed_for_windows(family):
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REG) as k:
+            winreg.QueryValueEx(k, f"{family} (TrueType)")
+            return True
+    except OSError:
+        return False
+
+
+def install_for_windows(family):
+    """Install PubDesign's copy of `family` for the current Windows user so every app can use it.
+    Returns (ok, message)."""
+    if os.name != "nt":
+        return False, "Installing fonts for all apps works on Windows only."
+    paths = fetched_families().get(family) or []
+    if not paths:
+        return False, f"PubDesign doesn't have a copy of {family}."
+    import ctypes
+    import shutil
+    import winreg
+    dest_dir = _user_font_dir()
+    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REG) as k:
+            for p in paths:
+                dest = os.path.join(dest_dir, os.path.basename(p))
+                shutil.copyfile(p, dest)
+                winreg.SetValueEx(k, _reg_name(p), 0, winreg.REG_SZ, dest)
+                ctypes.windll.gdi32.AddFontResourceW(dest)
+    except OSError as e:
+        return False, f"Windows didn't allow installing {family}: {e}"
+    try:  # tell running apps the font list changed (WM_FONTCHANGE)
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001D, 0, 0, 0x0002, 1000, None)
+    except Exception:
+        pass
+    return True, f"{family} is installed for all your apps. Programs that are already open may need a restart."
+
+
 class FontFetcher(QObject):
     """Looks up missing fonts in a background thread. `ready` fires (on the UI thread) with
     {family: [paths]} for the fonts that were found."""
     ready = Signal(dict)
     status = Signal(str)
 
-    def fetch_missing(self, families):
+    def fetch_missing(self, families, force=False):
         have = installed_families()
         todo = []
         with _lock:
             for fam in families:
-                if not fam or fam.lower() in have or fam in _tried:
+                if not fam or fam.lower() in have or (fam in _tried and not force):
                     continue
                 _tried.add(fam)
                 todo.append(fam)
@@ -230,5 +338,5 @@ class FontFetcher(QObject):
                     idx = _load_index()
                     idx.update(found)
                     _save_index(idx)
-            self.ready.emit(found)
+            self.ready.emit({"found": found, "missing": [f for f in todo if f not in found]})
         threading.Thread(target=run, daemon=True).start()

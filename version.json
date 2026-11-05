@@ -1,4 +1,4 @@
 {
-  "version": "2.4.1",
-  "notes": "Start screen without a blank publication behind it, missing fonts fetched free from Google Fonts, and text no longer clipped at the edge of text boxes."
+  "version": "2.4.2",
+  "notes": "File > Info lists the fonts in your publication and whether they are installed; fonts PubDesign fetched can be installed for all apps."
 }
