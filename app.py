@@ -6,15 +6,15 @@ import sys
 import traceback
 
 from PySide6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize, QTimer, QMarginsF, QSettings, QUrl, QMimeData
-from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPageSize, QPdfWriter,
+from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPageSize, QPageLayout, QPdfWriter,
                            QPixmap, QTextCursor, QDesktopServices, QTextCharFormat, QTextBlockFormat, QPen,
                            QGuiApplication)
 from PySide6.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QFileDialog, QMessageBox, QListWidget,
                                QListWidgetItem, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel,
                                QFontComboBox, QDoubleSpinBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
                                QToolButton, QMenu, QSpinBox, QStatusBar, QCheckBox, QScrollArea, QFrame, QSlider,
-                               QStackedWidget, QSplitter, QProgressDialog, QSizePolicy, QTabWidget)
-from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+                               QStackedWidget, QSplitter, QProgressDialog, QSizePolicy, QTabWidget, QLineEdit)
+from PySide6.QtPrintSupport import QPrinter, QPrintDialog, QPrinterInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -450,35 +450,324 @@ class Backstage(QWidget):
         v.addStretch()
         return w
 
+    # ---------------- Print (Publisher-style: settings on the left, live preview on the right) -----------
     def _print_page(self):
         w, v = self._page("Print")
         row = QHBoxLayout()
-        left = QVBoxLayout()
-        pb = QToolButton()
-        pb.setObjectName("BigAction")
-        pb.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-        pb.setIcon(icons.icon("print", 32))
-        pb.setIconSize(QSize(40, 40))
-        pb.setText("Print")
-        pb.setFixedSize(110, 96)
-        pb.clicked.connect(self.editor.print_doc)
-        left.addWidget(pb)
-        note = QLabel("Choose the printer, pages and\ncopies in the next window.")
-        note.setStyleSheet("color:#555")
-        left.addWidget(note)
-        left.addStretch()
-        row.addLayout(left)
+        row.setSpacing(28)
+        left = QWidget()
+        left.setFixedWidth(310)
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(6)
+
+        top = QHBoxLayout()
+        self.print_btn = QToolButton()
+        self.print_btn.setObjectName("BigAction")
+        self.print_btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.print_btn.setIcon(icons.icon("print", 32))
+        self.print_btn.setIconSize(QSize(40, 40))
+        self.print_btn.setText("Print")
+        self.print_btn.setFixedSize(100, 92)
+        self.print_btn.clicked.connect(self.do_print)
+        top.addWidget(self.print_btn)
+        cb = QVBoxLayout()
+        cb.setSpacing(4)
+        cb.addWidget(QLabel("Copies of print job:"))
+        self.copies = QSpinBox()
+        self.copies.setRange(1, 999)
+        self.copies.setFixedWidth(80)
+        cb.addWidget(self.copies)
+        self.collate = QCheckBox("Collated")
+        self.collate.setChecked(True)
+        cb.addWidget(self.collate)
+        top.addLayout(cb)
+        top.addStretch()
+        lv.addLayout(top)
+
+        def head(text):
+            l = QLabel(text)
+            l.setStyleSheet("font-size:12pt; color:#222; padding-top:10px; border-bottom:1px solid #ddd")
+            lv.addWidget(l)
+
+        head("Printer")
+        self.printer_combo = QComboBox()
+        self.printer_combo.currentIndexChanged.connect(self._printer_changed)
+        lv.addWidget(self.printer_combo)
+        links = QHBoxLayout()
+        for text, fn in [("Add a printer", lambda: QDesktopServices.openUrl(QUrl("ms-settings:printers"))),
+                         ("More settings (Windows print window)", self.editor.print_doc)]:
+            b = QToolButton()
+            b.setText(text)
+            b.setAutoRaise(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(f"QToolButton {{ color:{ACCENT}; border:none; padding:0; }}"
+                            "QToolButton:hover { text-decoration: underline; }")
+            b.clicked.connect(fn)
+            links.addWidget(b)
+        links.addStretch()
+        lv.addLayout(links)
+
+        head("Settings")
+        self.range_combo = QComboBox()
+        self.range_combo.addItems(["Print All Pages", "Print Current Page", "Custom Print"])
+        lv.addWidget(self.range_combo)
+        self.range_edit = QLineEdit()
+        self.range_edit.setPlaceholderText("Pages, e.g. 1-3, 5")
+        self.range_edit.setVisible(False)
+        lv.addWidget(self.range_edit)
+        self.fit_combo = QComboBox()
+        self.fit_combo.addItems(["Fit to Paper", "Actual Size"])
+        lv.addWidget(self.fit_combo)
+        self.paper_combo = QComboBox()
+        lv.addWidget(self.paper_combo)
+        self.orient_combo = QComboBox()
+        self.orient_combo.addItems(["Portrait Orientation", "Landscape Orientation"])
+        lv.addWidget(self.orient_combo)
+        self.duplex_combo = QComboBox()
+        self.duplex_combo.addItems(["Print One Sided", "Print on Both Sides (flip on long edge)",
+                                    "Print on Both Sides (flip on short edge)"])
+        lv.addWidget(self.duplex_combo)
+        self.color_combo = QComboBox()
+        self.color_combo.addItems(["Color", "Grayscale"])
+        lv.addWidget(self.color_combo)
+        self.print_msg = QLabel()
+        self.print_msg.setWordWrap(True)
+        self.print_msg.setStyleSheet("color:#a33; padding-top:6px")
+        lv.addWidget(self.print_msg)
+        lv.addStretch()
+        row.addWidget(left, 0, Qt.AlignTop)
+
+        # preview
+        right = QFrame()
+        right.setStyleSheet("QFrame { background:#e6e6e6; border-radius:6px; }")
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(12, 12, 12, 8)
         self.preview = QLabel()
         self.preview.setAlignment(Qt.AlignCenter)
-        self.preview.setStyleSheet("background:#e9e9e9; padding:16px")
-        row.addWidget(self.preview, 1)
+        self.preview.setMinimumSize(300, 300)
+        self.preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        rv.addWidget(self.preview, 1)
+        nav = QHBoxLayout()
+        nav.addStretch()
+        self.pv_prev = QToolButton()
+        self.pv_prev.setText("◀")
+        self.pv_prev.setAutoRaise(True)
+        self.pv_prev.clicked.connect(lambda: self._pv_step(-1))
+        self.pv_label = QLabel()
+        self.pv_label.setStyleSheet("background:transparent; color:#333; padding:0 10px")
+        self.pv_next = QToolButton()
+        self.pv_next.setText("▶")
+        self.pv_next.setAutoRaise(True)
+        self.pv_next.clicked.connect(lambda: self._pv_step(1))
+        for x in (self.pv_prev, self.pv_label, self.pv_next):
+            nav.addWidget(x)
+        nav.addStretch()
+        rv.addLayout(nav)
+        row.addWidget(right, 1)
         v.addLayout(row, 1)
+
+        self.pv_pos = 0
+        for c in (self.range_combo, self.fit_combo, self.paper_combo, self.orient_combo, self.color_combo):
+            c.currentIndexChanged.connect(self._print_settings_changed)
+        self.range_edit.textChanged.connect(self._print_settings_changed)
+        self._fill_printers()
         return w
+
+    def _fill_printers(self):
+        self.printer_combo.blockSignals(True)
+        self.printer_combo.clear()
+        try:
+            infos = QPrinterInfo.availablePrinters()
+            default = QPrinterInfo.defaultPrinterName()
+        except Exception:
+            infos, default = [], ""
+        for info in infos:
+            self.printer_combo.addItem(icons.icon("print", 16), info.printerName(), info.printerName())
+        last = self.editor.settings.value("last_printer", "") or default
+        i = self.printer_combo.findData(last)
+        if i < 0:
+            i = self.printer_combo.findData(default)
+        self.printer_combo.setCurrentIndex(max(i, 0))
+        if not infos:
+            self.printer_combo.addItem("No printer found")
+        self.printer_combo.blockSignals(False)
+        self._printer_changed()
+
+    def _printer_changed(self, *_):
+        name = self.printer_combo.currentData()
+        self.print_btn.setEnabled(bool(name))
+        self.print_msg.setText("" if name else "Windows didn't report any printers. Click 'Add a printer'.")
+        # paper sizes the printer supports
+        keep = self.paper_combo.currentText()
+        self.paper_combo.blockSignals(True)
+        self.paper_combo.clear()
+        doc = self.editor.doc
+        self.paper_combo.addItem(f"Publication size ({_fmt_size(doc)})", None)
+        sizes = []
+        if name:
+            try:
+                sizes = QPrinterInfo.printerInfo(name).supportedPageSizes()
+            except Exception:
+                sizes = []
+        if not sizes:
+            sizes = [QPageSize(QPageSize.Letter), QPageSize(QPageSize.Legal), QPageSize(QPageSize.Tabloid),
+                     QPageSize(QPageSize.A4), QPageSize(QPageSize.A3)]
+        seen = set()
+        for ps in sizes:
+            if ps.name() in seen:
+                continue
+            seen.add(ps.name())
+            self.paper_combo.addItem(ps.name(), ps)
+        i = self.paper_combo.findText(keep)
+        if i < 0:
+            # Publisher's default: the paper that matches the publication, otherwise the publication size
+            i = 0
+            for j in range(1, self.paper_combo.count()):
+                sz = self.paper_combo.itemData(j).size(QPageSize.Point)
+                if {round(sz.width()), round(sz.height())} == {round(doc.width), round(doc.height)}:
+                    i = j
+                    break
+        self.paper_combo.setCurrentIndex(i)
+        self.paper_combo.blockSignals(False)
+        self._print_settings_changed()
+
+    def _selected_pages(self):
+        ed = self.editor
+        n = len(ed.doc.pages)
+        mode = self.range_combo.currentIndex()
+        if mode == 0:
+            return list(range(n))
+        if mode == 1:
+            return [ed.page_index]
+        out = []
+        for part in self.range_edit.text().replace(";", ",").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    a, b = int(a or 1), int(b or n)
+                    out += list(range(min(a, b), max(a, b) + 1))
+                else:
+                    out.append(int(part))
+            except ValueError:
+                continue
+        return [p - 1 for p in out if 1 <= p <= n] or list(range(n))
+
+    def _paper_points(self):
+        """Paper size in points for the current settings, oriented."""
+        doc = self.editor.doc
+        ps = self.paper_combo.currentData()
+        if ps is None:
+            w, h = doc.width, doc.height
+        else:
+            sz = ps.size(QPageSize.Point)
+            w, h = sz.width(), sz.height()
+        land = self.orient_combo.currentIndex() == 1
+        if (w > h) != land:
+            w, h = h, w
+        return w, h
+
+    def _print_settings_changed(self, *_):
+        self.range_edit.setVisible(self.range_combo.currentIndex() == 2)
+        self.pv_pos = min(self.pv_pos, max(len(self._selected_pages()) - 1, 0))
+        self.refresh_preview()
+
+    def _pv_step(self, d):
+        self.pv_pos = max(0, min(self.pv_pos + d, len(self._selected_pages()) - 1))
+        self.refresh_preview()
 
     def refresh_preview(self):
         ed = self.editor
-        img = page_image(ed.doc.pages[ed.page_index], ed.doc, 520 if ed.doc.width >= ed.doc.height else 380)
+        if not hasattr(self, "paper_combo"):
+            return
+        if self.paper_combo.count():
+            self.paper_combo.setItemText(0, f"Publication size ({_fmt_size(ed.doc)})")
+        pages = self._selected_pages()
+        self.pv_pos = max(0, min(self.pv_pos, len(pages) - 1))
+        idx = pages[self.pv_pos]
+        pw, ph = self._paper_points()
+        # fit the paper into the preview area
+        avail_w = max(self.preview.width() - 30, 200)
+        avail_h = max(self.preview.height() - 30, 200)
+        dpr = self.devicePixelRatioF()
+        z = min(avail_w / pw, avail_h / ph)
+        img = QImage(int(pw * z * dpr) + 8, int(ph * z * dpr) + 8, QImage.Format_ARGB32)
+        img.setDevicePixelRatio(dpr)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        paper = QRectF(2, 2, pw * z, ph * z)
+        p.fillRect(paper.translated(3, 3), QColor(0, 0, 0, 40))
+        p.fillRect(paper, QColor(255, 255, 255))
+        doc = ed.doc
+        if self.fit_combo.currentIndex() == 0:
+            m = 0.25 * 72 * z  # typical unprintable edge
+            s = min((paper.width() - 2 * m) / doc.width, (paper.height() - 2 * m) / doc.height)
+        else:
+            s = z
+        tw, th = doc.width * s, doc.height * s
+        target = QRectF(paper.center().x() - tw / 2, paper.center().y() - th / 2, tw, th)
+        p.save()
+        p.setClipRect(paper)
+        render_page(p, doc.pages[idx], doc, target)
+        p.restore()
+        if tw > paper.width() + 0.5 or th > paper.height() + 0.5:
+            self.print_msg.setText("The publication is bigger than the paper, so its edges will be cut off. "
+                                   "Choose 'Fit to Paper' or a larger paper size.")
+        elif self.printer_combo.currentData():
+            self.print_msg.setText("")
+        p.end()
+        if self.color_combo.currentIndex() == 1:
+            g = img.convertToFormat(QImage.Format_Grayscale8).convertToFormat(QImage.Format_ARGB32)
+            # keep the transparent surround
+            for_alpha = img.convertToFormat(QImage.Format_Alpha8)
+            g.setAlphaChannel(for_alpha)
+            g.setDevicePixelRatio(dpr)
+            img = g
         self.preview.setPixmap(QPixmap.fromImage(img))
+        self.pv_label.setText(f"Page {idx + 1}   ({self.pv_pos + 1} of {len(pages)} to print)")
+        self.pv_prev.setEnabled(self.pv_pos > 0)
+        self.pv_next.setEnabled(self.pv_pos < len(pages) - 1)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if hasattr(self, "pages") and self.body.currentWidget() is self.pages.get("print"):
+            QTimer.singleShot(0, self.refresh_preview)
+
+    def do_print(self):
+        ed = self.editor
+        name = self.printer_combo.currentData()
+        if not name:
+            return
+        ed.settings.setValue("last_printer", name)
+        printer = QPrinter(QPrinterInfo.printerInfo(name), QPrinter.HighResolution)
+        pw, ph = self._paper_points()
+        ps = self.paper_combo.currentData()
+        if ps is None:
+            ps = QPageSize(QSizeF(min(pw, ph), max(pw, ph)), QPageSize.Point, "", QPageSize.FuzzyMatch)
+        printer.setPageSize(ps)
+        printer.setPageOrientation(QPageLayout.Landscape if pw > ph else QPageLayout.Portrait)
+        printer.setDuplex([QPrinter.DuplexNone, QPrinter.DuplexLongSide, QPrinter.DuplexShortSide]
+                          [self.duplex_combo.currentIndex()])
+        printer.setColorMode(QPrinter.GrayScale if self.color_combo.currentIndex() == 1 else QPrinter.Color)
+        printer.setDocName(os.path.basename(ed.path) if ed.path else "Publication1")
+        copies = self.copies.value()
+        printer.setCollateCopies(self.collate.isChecked())
+        manual = 1
+        printer.setCopyCount(copies)
+        if copies > 1 and not printer.supportsMultipleCopies():
+            printer.setCopyCount(1)
+            manual = copies
+        pages = self._selected_pages()
+        if manual > 1:
+            pages = [p for p in pages for _ in range(manual)] if not self.collate.isChecked() else pages * manual
+        ed.close_backstage()
+        ok = print_pages(ed.doc, printer, pages, fit=self.fit_combo.currentIndex() == 0)
+        ed.statusBar().showMessage(f"Sent {len(pages)} page(s) to {name}" if ok else "Printing failed", 6000)
 
     def _export_page(self):
         w, v = self._page("Export")
@@ -506,9 +795,14 @@ class Backstage(QWidget):
             self.refresh_info()
         elif key == "open":
             self.refresh_recent()
-        elif key == "print":
-            self.refresh_preview()
         self.body.setCurrentWidget(self.pages[key])
+        if key == "print":
+            self.orient_combo.blockSignals(True)
+            self.orient_combo.setCurrentIndex(1 if ed.doc.width > ed.doc.height else 0)
+            self.orient_combo.blockSignals(False)
+            self.pv_pos = 0
+            self._fill_printers()
+            QTimer.singleShot(0, self.refresh_preview)
 
 
 # ---------------------------------------------------------------------------
@@ -2516,17 +2810,39 @@ def export_pdf(doc, path):
     p.end()
 
 
-def print_pages(doc, printer):
-    p = QPainter(printer)
-    first, last = printer.fromPage() or 1, printer.toPage() or len(doc.pages)
-    for n, i in enumerate(range(first - 1, last)):
+def print_pages(doc, printer, pages=None, fit=True):
+    if pages is None:
+        first, last = printer.fromPage() or 1, printer.toPage() or len(doc.pages)
+        pages = list(range(first - 1, last))
+    p = QPainter()
+    if not p.begin(printer):
+        return False
+    res = printer.resolution()
+    paint = printer.pageLayout().paintRectPixels(res)
+    full = printer.pageLayout().fullRectPixels(res)
+    for n, i in enumerate(pages):
         if n:
             printer.newPage()
-        rect = printer.pageLayout().paintRectPixels(printer.resolution())
-        s = min(rect.width() / doc.width, rect.height() / doc.height)
-        tw, th = doc.width * s, doc.height * s
-        render_page(p, doc.pages[i], doc, QRectF((rect.width() - tw) / 2, (rect.height() - th) / 2, tw, th))
+        if fit:
+            s = min(paint.width() / doc.width, paint.height() / doc.height)
+            tw, th = doc.width * s, doc.height * s
+            x, y = (paint.width() - tw) / 2, (paint.height() - th) / 2
+        else:
+            s = res / 72.0
+            tw, th = doc.width * s, doc.height * s
+            x, y = (full.width() - tw) / 2 - paint.x(), (full.height() - th) / 2 - paint.y()
+        render_page(p, doc.pages[i], doc, QRectF(x, y, tw, th))
     p.end()
+    return True
+
+
+def _fmt_size(doc):
+    unit = getattr(doc, "unit", "in")
+    if unit == "mm":
+        return f"{doc.width / 72 * 25.4:.0f} x {doc.height / 72 * 25.4:.0f} mm"
+    if unit == "px":
+        return f"{doc.width:.0f} x {doc.height:.0f} px"
+    return f"{doc.width / 72:g} x {doc.height / 72:g} in"
 
 
 def selftest():

@@ -1,4 +1,4 @@
 {
-  "version": "2.2.0",
-  "notes": "New Office-style title bar with Save, Undo and Redo up top, command search (Alt+Q), cleaner ribbon and an Export button."
+  "version": "2.2.1",
+  "notes": "New Print screen with a live preview, printer choice, page range, paper size, two-sided and grayscale printing."
 }

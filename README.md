@@ -32,7 +32,8 @@ installs the new version and reopens on its own. You can also check by hand unde
 - Text boxes with fonts, sizes, bold/italic/underline, colors, alignment and bullets
 - Publisher AutoShapes (stars, arrows, heart and more), lines and pictures
 - Format Painter, page background, orientation and page sizes for print and social media
-- Saves `.pub` natively; also exports PDF, PNG and JPG, and prints
+- Saves `.pub` natively; also exports PDF, PNG and JPG
+- Publisher-style **Print** screen with a live preview, page ranges, paper size, two-sided and grayscale printing
 
 ## How .pub support works
 
