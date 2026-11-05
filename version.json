@@ -1,4 +1,4 @@
 {
-  "version": "2.2.2",
-  "notes": "Updates now install without opening a Command Prompt window; a small progress window shows instead."
+  "version": "2.2.3",
+  "notes": "Updates now download in the background and install by themselves when you close PubDesign. No Command Prompt window."
 }

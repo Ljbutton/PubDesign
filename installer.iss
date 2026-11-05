@@ -44,6 +44,12 @@ begin
       Result := True;
 end;
 
+// reopen PubDesign after a silent update, unless it was installed because PubDesign was closing
+function ShouldRelaunch(): Boolean;
+begin
+  Result := WizardSilent and not HasParam('/NOLAUNCH');
+end;
+
 function InitializeSetup(): Boolean;
 var
   Waited: Integer;
@@ -94,4 +100,4 @@ Root: HKCU; Subkey: "Software\Classes\.pub"; ValueType: string; ValueName: ""; V
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "Launch PubDesign"; Flags: nowait postinstall skipifsilent
 ; after a silent auto-update, reopen PubDesign
-Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: WizardSilent
+Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: ShouldRelaunch

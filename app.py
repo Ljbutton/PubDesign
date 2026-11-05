@@ -1048,6 +1048,12 @@ class MainWindow(QMainWindow):
         self.checker.upToDate.connect(self._up_to_date)
         self.checker.failed.connect(self._update_failed)
         self._manual_check = False
+        self._ready_setup = None
+        self.downloader = None
+        if updater.FROZEN:
+            self.downloader = updater.SetupDownloader()
+            self.downloader.ready.connect(self._update_downloaded)
+            self.downloader.failed.connect(lambda e: None)
         if self.settings.value("auto_update", True, type=bool):
             QTimer.singleShot(2500, self.checker.check)
 
@@ -1083,9 +1089,19 @@ class MainWindow(QMainWindow):
             txt += f" &nbsp; <span style='color:#555'>{notes}</span>"
         self.msg_label.setText(txt)
         self.msgbar.setVisible(True)
+        if self.downloader is not None and self._ready_setup is None:
+            # get it ready in the background; it installs when PubDesign closes
+            self.downloader.start()
         if self._manual_check:
             self._manual_check = False
             self.close_backstage()
+
+    def _update_downloaded(self, path, version):
+        self._ready_setup = path
+        self.msg_label.setText(f"<b>UPDATE READY</b> &nbsp; PubDesign {version} is downloaded. It installs "
+                               "automatically when you close PubDesign, or click Restart now.")
+        self.msg_btn.setText("Restart now")
+        self.msgbar.setVisible(True)
 
     def _up_to_date(self, v):
         if self._manual_check:
@@ -1099,6 +1115,12 @@ class MainWindow(QMainWindow):
 
     def install_update(self):
         if not self.maybe_save():
+            return
+        if updater.FROZEN and self._ready_setup and os.path.exists(self._ready_setup):
+            updater.launch_setup(self._ready_setup, relaunch=True)
+            self._ready_setup = None
+            self.dirty = False
+            QApplication.quit()
             return
         prog = QProgressDialog("Downloading update…", None, 0, 100, self)
         prog.setWindowTitle(APP)
@@ -2791,6 +2813,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev):
         if self.maybe_save():
             ev.accept()
+            if updater.FROZEN and self._ready_setup and os.path.exists(self._ready_setup):
+                # install the downloaded update quietly now that PubDesign is closing
+                try:
+                    updater.launch_setup(self._ready_setup, relaunch=False)
+                except Exception:
+                    pass
+                self._ready_setup = None
         else:
             ev.ignore()
 

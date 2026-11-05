@@ -17,10 +17,11 @@ background. If it isn't installed, PubDesign offers to install it the first time
 
 ## Updates
 
-PubDesign checks for new versions when it starts. When one is available, a yellow
-**UPDATE AVAILABLE** bar appears under the ribbon. Click **Update now**. PubDesign closes,
-installs the new version and reopens on its own. You can also check by hand under
-**File ▸ Info ▸ Check for Updates**.
+PubDesign checks for new versions when it starts and downloads them in the background.
+When an update is ready, a yellow bar appears under the ribbon. Click **Restart now** to
+install it right away. PubDesign closes, shows a small progress window and reopens by
+itself. Or just keep working: the update installs automatically when you close PubDesign.
+You can also check by hand under **File ▸ Info ▸ Check for Updates**.
 
 ## Features
 

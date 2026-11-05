@@ -74,23 +74,51 @@ def download(url, dest, progress=None):
                 progress(done, total)
 
 
-def install_exe_update(progress=None):
-    """Installed app: download the new installer and run it silently once PubDesign has closed.
-    The installer reopens PubDesign when it finishes. Call QApplication.quit() right after this."""
+def download_setup(progress=None):
+    """Installed app: download the newest installer. Returns (path, version)."""
     info = fetch_remote_info()
     url = info.get("setup_url")
     if not url:
         raise RuntimeError("The newest release doesn't have an installer yet. Try again in a few minutes.")
-    dest = os.path.join(tempfile.gettempdir(), SETUP_NAME)
-    download(url, dest, progress)
-    if os.path.getsize(dest) < 1_000_000:
+    version = info.get("version", "?")
+    dest = os.path.join(tempfile.gettempdir(), f"PubDesign-Setup-{version}.exe")
+    part = dest + ".part"
+    download(url, part, progress)
+    if os.path.getsize(part) < 1_000_000:
         raise RuntimeError("The download was incomplete. Try again.")
-    # Run the installer directly (no Command Prompt). /WAITFORAPP makes it wait until this
-    # copy of PubDesign has closed (see APP_MUTEX) before replacing files; it shows only a
-    # small progress window and reopens PubDesign when done.
-    subprocess.Popen([dest, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/WAITFORAPP"],
-                     close_fds=True, creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_PROCESS_GROUP
-    return info.get("version", "?")
+    os.replace(part, dest)
+    return dest, version
+
+
+def launch_setup(path, relaunch=True):
+    """Run the installer directly (no Command Prompt). /WAITFORAPP makes it wait until this copy of
+    PubDesign has closed (see APP_MUTEX) before replacing files. It shows a small progress window and,
+    unless /NOLAUNCH is given, reopens PubDesign when done. Quit PubDesign right after calling this."""
+    args = [path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/WAITFORAPP"]
+    if not relaunch:
+        args.append("/NOLAUNCH")
+    subprocess.Popen(args, close_fds=True, creationflags=0x00000008 | 0x00000200)  # DETACHED | NEW_PROCESS_GROUP
+
+
+def install_exe_update(progress=None):
+    path, version = download_setup(progress)
+    launch_setup(path, relaunch=True)
+    return version
+
+
+class SetupDownloader(QObject):
+    """Downloads the new installer in the background so the update is ready to install."""
+    ready = Signal(str, str)   # path, version
+    failed = Signal(str)
+
+    def start(self):
+        def run():
+            try:
+                path, version = download_setup()
+                self.ready.emit(path, version)
+            except Exception as e:
+                self.failed.emit(str(e))
+        threading.Thread(target=run, daemon=True).start()
 
 
 APP_MUTEX = "PubDesignRunning"
