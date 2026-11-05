@@ -3328,7 +3328,8 @@ def selftest():
             ok &= tool is not None
             # Publisher-made file through the bundled reader
             fodg_dir = tempfile.mkdtemp()
-            fodg = PI.pubconv_to_fodg(asset("template.pub"), fodg_dir)
+            import pubwriter
+            fodg = PI.pubconv_to_fodg(pubwriter.TEMPLATE, fodg_dir)
             pages = len(PI.FodgReader(fodg).document().pages) if fodg else 0
             report.append(f"Publisher file via pubconv: {pages} page(s) {PI.last_pubconv_error}")
             ok &= pages >= 1
