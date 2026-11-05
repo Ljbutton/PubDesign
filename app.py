@@ -2971,16 +2971,57 @@ def _fmt_size(doc):
 
 
 def selftest():
-    """Used by the build server: start the app, write and read a .pub, exit 0 on success."""
+    """Used by the build server: start the app, write and read a .pub, open a Publisher-made file with the
+    bundled reader and draw a WMF picture. Exit 0 on success; details go to %TEMP%\\pubdesign_selftest.txt."""
     import tempfile
     from pubreader import read_pub as _rp
+    import pub_import as PI
     app = QApplication(sys.argv)
-    w = MainWindow()
-    w.new_from(templates.flyer())
-    p = os.path.join(tempfile.gettempdir(), "pubdesign_selftest.pub")
-    ok = w._write_pub(p) and len(_rp(p).pages[0].items) == len(templates.flyer().pages[0].items)
-    w.dirty = False
-    print("SELFTEST", "OK" if ok else "FAILED", VERSION)
+    report = []
+    ok = True
+    try:
+        w = MainWindow()
+        w.new_from(templates.flyer())
+        p = os.path.join(tempfile.gettempdir(), "pubdesign_selftest.pub")
+        good = w._write_pub(p) and len(_rp(p).pages[0].items) == len(templates.flyer().pages[0].items)
+        report.append(f"write/read .pub: {'OK' if good else 'FAILED'}")
+        ok &= bool(good)
+        w.dirty = False
+        tool = PI.find_pubconv()
+        report.append(f"pubconv: {tool}")
+        if getattr(sys, "frozen", False) and os.name == "nt":
+            ok &= tool is not None
+            # Publisher-made file through the bundled reader
+            fodg_dir = tempfile.mkdtemp()
+            fodg = PI.pubconv_to_fodg(asset("template.pub"), fodg_dir)
+            pages = len(PI.FodgReader(fodg).document().pages) if fodg else 0
+            report.append(f"Publisher file via pubconv: {pages} page(s)")
+            ok &= pages >= 1
+            # WMF clip art through GDI+
+            wmf = os.path.join(os.path.dirname(tool), "test.wmf")
+            with open(wmf, "rb") as f:
+                png = PI.metafile_to_png_native(f.read(), "wmf", 300, 240, fodg_dir)
+            img = QImage.fromData(png) if png else QImage()
+            clear = drawn = 0
+            if not img.isNull():
+                for y in range(0, img.height(), 4):
+                    for x in range(0, img.width(), 4):
+                        a = img.pixelColor(x, y).alpha()
+                        clear += a == 0
+                        drawn += a > 200
+            report.append(f"WMF picture: {img.width()}x{img.height()} transparent={clear} drawn={drawn}")
+            ok &= (not img.isNull()) and drawn > 20 and clear > 20
+    except Exception:
+        report.append(traceback.format_exc())
+        ok = False
+    report.append(f"SELFTEST {'OK' if ok else 'FAILED'} {VERSION}")
+    text = "\n".join(report)
+    print(text)
+    try:
+        with open(os.path.join(tempfile.gettempdir(), "pubdesign_selftest.txt"), "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
     sys.exit(0 if ok else 1)
 
 

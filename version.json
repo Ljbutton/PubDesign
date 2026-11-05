@@ -1,4 +1,4 @@
 {
-  "version": "2.2.6",
-  "notes": "Opens Publisher files with tables, no more freezing while opening Publisher files, and errors are saved to a log instead of closing PubDesign."
+  "version": "2.3.0",
+  "notes": "Opens Microsoft Publisher files with a built-in reader, so LibreOffice is no longer needed."
 }

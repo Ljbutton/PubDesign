@@ -44,6 +44,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - uses: msys2/setup-msys2@v2
+        if: steps.check.outputs.exists == 'false'
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libmspub
+            mingw-w64-ucrt-x86_64-libodfgen
+
+      - name: Build the Publisher reader (pubconv)
+        if: steps.check.outputs.exists == 'false'
+        shell: msys2 {0}
+        run: bash tools/pubconv/build_windows.sh
+
       - name: Build PubDesign.exe
         if: steps.check.outputs.exists == 'false'
         run: pyinstaller --noconfirm pubdesign.spec
@@ -54,6 +70,7 @@ jobs:
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
           $p = Start-Process -FilePath "dist\PubDesign\PubDesign.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "$env:TEMP\pubdesign_selftest.txt" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { Write-Error "Self-test failed ($($p.ExitCode))"; exit 1 }
 
       - name: Build installer

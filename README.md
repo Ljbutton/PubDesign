@@ -12,8 +12,8 @@ Run it once. It installs PubDesign for your Windows account (no admin password n
 adds Start menu and desktop shortcuts. If Windows shows "Windows protected your PC", click
 **More info**, then **Run anyway**. This appears because the installer isn't code-signed.
 
-To open `.pub` files made in Microsoft Publisher, PubDesign uses free LibreOffice in the
-background. If it isn't installed, PubDesign offers to install it the first time you need it.
+Files made in Microsoft Publisher open with PubDesign's built-in Publisher reader. Nothing
+else needs to be installed.
 
 ## Updates
 
@@ -43,8 +43,10 @@ reverse-engineered from real Publisher 2002–2010 files and checked against Lib
 independent Publisher reader.
 
 - `.pub` files saved by PubDesign reopen with PubDesign's own reader, with nothing lost.
-- `.pub` files made in Microsoft Publisher open through LibreOffice. For complex files,
-  **File ▸ Open ▸ Open a Publisher file as pictures** gives an exact, non-editable copy.
+- `.pub` files made in Microsoft Publisher open with the bundled reader (`tools/pubconv`), built
+  from libmspub, the open-source Publisher reader that LibreOffice also uses. Clip art (WMF/EMF)
+  is drawn by Windows itself. If LibreOffice happens to be installed, it is used as a backup and
+  for **File ▸ Open ▸ Open a Publisher file as pictures**.
 
 ## Releasing an update (maintainer)
 
