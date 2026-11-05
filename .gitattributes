@@ -2,3 +2,5 @@
 *.ps1 -text
 *.pub binary
 *.ico binary
+*.sh text eol=lf
+*.wmf binary
